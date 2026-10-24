@@ -8,6 +8,70 @@ ROS 2 控制话题。JAKA 双臂驱动、PGI 夹爪控制、AMR 底盘接口及�
 Quest 3 的 MAC 地址为 `50:99:03:0a:38:78`。XRoboToolkit 使用 PC-service 自动
 发现设备，日常遥操作不需要配置 MAC；该地址用于设备识别、库存记录和网络排查。
 
+## 修改后最短运行流程
+
+首次使用先编译工程。以下命令在 zsh 中执行：
+
+```zsh
+cd "$HOME/Documents/dj_main/XRToolKit/demo"
+./build.zsh
+source "$HOME/Documents/dj_main/XRToolKit/demo/setup.zsh"
+ros2 pkg prefix jaka_driver
+```
+
+最后一条命令必须输出 `jaka_driver` 的安装路径。如果没有输出，说明编译或工作区加载
+失败，不要继续启动机械臂。
+
+运行时使用三个终端：
+
+**终端 1：启动 XRoboToolkit PC-service**
+
+```zsh
+cd /opt/apps/roboticsservice
+./runService.sh
+```
+
+**Quest 3：发送数据**
+
+在头显中打开 `XRoboToolkit`，输入 JAKA 主机的局域网 IP，开启控制器 Tracking 和
+Send。这里不再运行旧的 `quest_reader`，也不再需要旧 APK 的 adb logcat。
+
+**终端 2：启动 JAKA 双臂和夹爪**
+
+```zsh
+cd "$HOME/Documents/dj_main/XRToolKit/demo"
+source "$HOME/Documents/dj_main/XRToolKit/demo/setup.zsh"
+
+ros2 launch jaka_driver dual_arm_teleop.launch.py \
+  robot_left_ip:=192.168.71.37 \
+  robot_right_ip:=192.168.71.36 \
+  gripper_rs485_channel:=1 \
+  gripper_force:=20 \
+  gripper_speed:=40 \
+  gripper_configure_tio:=false
+```
+
+按住左手柄 Grip 控制左臂，按住右手柄 Grip 控制右臂，松开即停止。左手 Trigger
+控制左夹爪，右手 Trigger 控制右夹爪。首次测试应空载、低速，并先分别测试左右臂。
+
+如果需要同时启动 AMR 底盘：
+
+```zsh
+cd "$HOME/Documents/dj_main/XRToolKit/demo"
+source "$HOME/Documents/dj_main/XRToolKit/demo/setup.zsh"
+
+ros2 launch robot_bringup RC_robot_bringup.launch.py \
+  robot_left_ip:=192.168.71.37 \
+  robot_right_ip:=192.168.71.36 \
+  connect_ip:=192.168.71.50 \
+  gripper_rs485_channel:=1 \
+  gripper_configure_tio:=false
+```
+
+以后每次运行，如果工作区代码和编译选项没有变化，只需在启动终端中执行
+`source "$HOME/Documents/dj_main/XRToolKit/demo/setup.zsh"`，然后运行对应的
+`ros2 launch` 命令。
+
 ## 目录
 
 ```text
@@ -45,6 +109,8 @@ XRoboToolkit PC-service (JAKA 主机)
 桥接节点以 125 Hz 读取 SDK，沿用旧工程的位姿低通滤波、坐标映射、手柄按键布局和
 ROS 话题。控制消费端无需感知输入已经由旧 APK 换为 XRoboToolKit。
 
+以下命令均按 zsh 编写，使用 ROS 和工作区生成的 `setup.zsh`。
+
 ## 固定设备信息
 
 | 设备 | 地址/参数 |
@@ -66,7 +132,7 @@ ROS 话题。控制消费端无需感知输入已经由旧 APK 换为 XRoboToolK
 JAKA 主机是 `aarch64/arm64`，必须安装 PC-service 的 ARM64 包，不能使用
 `amd64/x64` 包。
 
-```bash
+```zsh
 uname -m                              # 应为 aarch64
 dpkg --print-architecture             # 应为 arm64
 ```
@@ -75,7 +141,7 @@ dpkg --print-architecture             # 应为 arm64
 <https://github.com/XR-Robotics/XRoboToolkit-PC-Service/releases>
 下载 `XRoboToolkit-PC-Service_1.0.0.0_arm64.deb` 后安装：
 
-```bash
+```zsh
 sudo apt-get update
 sudo apt-get install -y build-essential
 sudo dpkg -i XRoboToolkit-PC-Service_1.0.0.0_arm64.deb
@@ -84,7 +150,7 @@ sudo apt-get -f install
 
 安装 Python SDK（`xrobotoolkit_sdk`）：
 
-```bash
+```zsh
 git clone https://github.com/XR-Robotics/XRoboToolkit-PC-Service-Pybind.git
 cd XRoboToolkit-PC-Service-Pybind
 bash setup_ubuntu.sh
@@ -96,30 +162,29 @@ python3 -c "import xrobotoolkit_sdk"
 
 ### 2. 安装 AMR SDK 与 ROS 依赖
 
-```bash
+```zsh
 python3 -m pip install --force-reinstall \
-  /path/to/XRToolKit/demo/vendor/sros_sdk_py-1.4.1-py3-none-any.whl
+  "$HOME/Documents/dj_main/XRToolKit/demo/vendor/sros_sdk_py-1.4.1-py3-none-any.whl"
 ```
 
 JAKA SDK 所在的 `demo/src/jaka_driver/lib/libjakaAPI.so` 是 ARM64 版本，并且与复制
 过来的 JAKA 头文件匹配。若更换机械臂控制器 SDK，必须同时替换匹配版本的库，并保持
 架构为 `aarch64`：
 
-```bash
-file demo/src/jaka_driver/lib/libjakaAPI.so
+```zsh
+file "$HOME/Documents/dj_main/XRToolKit/demo/src/jaka_driver/lib/libjakaAPI.so"
 ```
 
 ### 3. 编译
 
-```bash
-source /opt/ros/humble/setup.bash
-cd /path/to/XRToolKit/demo
-colcon build --symlink-install --packages-up-to \
-  xrt_teleop jaka_driver sr_amr_control robot_bringup
-source install/setup.bash
+```zsh
+cd "$HOME/Documents/dj_main/XRToolKit/demo"
+./build.zsh
+source "$HOME/Documents/dj_main/XRToolKit/demo/install/setup.zsh"
 ```
 
 JAKA SDK 是 ARM64 二进制，不能在普通 x86_64 电脑上链接出可在 JAKA 主机运行的节点。
+`install/setup.zsh` 是 `colcon build` 成功后生成的，不能在编译前 source。
 
 ## 启动
 
@@ -127,7 +192,7 @@ JAKA SDK 是 ARM64 二进制，不能在普通 x86_64 电脑上链接出可在 J
 
 保持该终端运行：
 
-```bash
+```zsh
 cd /opt/apps/roboticsservice
 ./runService.sh
 ```
@@ -141,7 +206,7 @@ cd /opt/apps/roboticsservice
 
 如需通过 adb 从电脑启动 APK：
 
-```bash
+```zsh
 adb shell monkey -p com.xrobotoolkit.client.quest \
   -c android.intent.category.LAUNCHER 1
 ```
@@ -150,24 +215,24 @@ adb shell monkey -p com.xrobotoolkit.client.quest \
 
 不启动机械臂，先确认头显数据能到 PC-service：
 
-```bash
-cd /path/to/XRToolKit
+```zsh
+cd "$HOME/Documents/dj_main/XRToolKit"
 make -C demo run
 ```
 
 终端出现 `[DATA] First Quest state received` 后，在头显中移动手柄并按键。更详细的
 PC-service SDK 路径检查：
 
-```bash
+```zsh
 make -C demo info
 make -C demo XRT_SERVICE_ROOT=/opt/apps/roboticsservice
 ```
 
 ### 4. 启动双臂与夹爪
 
-```bash
-source /opt/ros/humble/setup.bash
-source /path/to/XRToolKit/demo/install/setup.bash
+```zsh
+cd "$HOME/Documents/dj_main/XRToolKit/demo"
+source "$HOME/Documents/dj_main/XRToolKit/demo/setup.zsh"
 
 ros2 launch jaka_driver dual_arm_teleop.launch.py \
   robot_left_ip:=192.168.71.37 \
@@ -183,14 +248,14 @@ ros2 launch jaka_driver dual_arm_teleop.launch.py \
 
 如果不希望启动时初始化夹爪产生动作：
 
-```bash
+```zsh
 ros2 launch jaka_driver dual_arm_teleop.launch.py \
   gripper_initialize:=false
 ```
 
 ### 5. 启动双臂 + AMR 底盘
 
-```bash
+```zsh
 ros2 launch robot_bringup RC_robot_bringup.launch.py \
   robot_left_ip:=192.168.71.37 \
   robot_right_ip:=192.168.71.36 \
@@ -239,7 +304,7 @@ ros2 launch robot_bringup RC_robot_bringup.launch.py \
 
 ## 检查话题
 
-```bash
+```zsh
 ros2 topic hz /rc_ctrl/button
 ros2 topic echo /rc_ctrl/button --once
 ros2 topic echo /rc_ctrl/left_target --once
@@ -260,6 +325,42 @@ Trigger 保持最后一次有效值，避免跟踪中断时夹爪突然动作。
 - AMR 底盘的 X/Y 急停逻辑沿用原 `sr_amr_control` 包，上线前必须按现场安全流程验证。
 
 ## 常见问题
+
+**`/opt/ros/humble/setup.bash:.:11` 指向当前工作区的 `setup.sh`**
+
+这说明当前终端继承了错误的 `COLCON_CURRENT_PREFIX`，并不一定是 ROS 安装损坏。
+在 zsh 中先清除该变量，再从干净环境加载：
+
+```zsh
+unset COLCON_CURRENT_PREFIX
+source /opt/ros/humble/setup.zsh
+```
+
+随后执行 `demo/build.zsh`，再 source `demo/install/setup.zsh`。如果仍然报错，请新开
+一个 zsh 终端后执行上述命令，避免旧终端的 `AMENT_PREFIX_PATH` 和 `PYTHONPATH` 继续
+污染环境。
+
+**`source: no such file or directory: /path/to/XRToolKit/demo/install/setup.bash`**
+
+`/path/to/XRToolKit` 是占位符，不能原样执行；且本工程现在使用 `.zsh`。先编译，再
+使用实际路径：
+
+```zsh
+cd "$HOME/Documents/dj_main/XRToolKit/demo"
+./build.zsh
+source "$HOME/Documents/dj_main/XRToolKit/demo/install/setup.zsh"
+```
+
+**`Package 'jaka_driver' not found`**
+
+这通常表示只加载了 `/opt/ros/humble`，没有加载 `demo/install/setup.zsh`，或者工作区
+从未成功编译。确认下面三条命令分别有输出：
+
+```zsh
+cd "$HOME/Documents/dj_main/XRToolKit/demo"
+source "$HOME/Documents/dj_main/XRToolKit/demo/setup.zsh"
+ros2 pkg prefix jaka_driver
+```
 
 **`No module named xrobotoolkit_sdk`**
 
