@@ -4,5 +4,10 @@
 /build/
 /install/
 /log/
+/.venv/
+/.deps/
+/.cache/
+/.colcon/
+/.ros/
 __pycache__/
 *.py[cod]

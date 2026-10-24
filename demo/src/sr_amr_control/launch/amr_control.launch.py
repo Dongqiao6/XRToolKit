@@ -1,8 +1,20 @@
+import os
+
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
 from launch_ros.parameter_descriptions import ParameterValue
+
+
+def _project_python_prefix():
+    venv = os.environ.get("XRT_VENV", "")
+    interpreter = os.path.join(venv, "bin", "python")
+    if not venv or not os.path.isfile(interpreter):
+        raise RuntimeError(
+            "XRT_VENV is not set or invalid; source demo/setup.zsh before launching"
+        )
+    return [interpreter]
 
 
 def generate_launch_description():
@@ -47,6 +59,7 @@ def generate_launch_description():
     executable='control_node',
     namespace='sr_amr_control',
     output='screen',
+    prefix=_project_python_prefix(),
     parameters=[
       {
         'connect_ip': connect_ip,

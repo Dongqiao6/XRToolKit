@@ -8,6 +8,16 @@ from launch_ros.actions import Node
 from launch_ros.parameter_descriptions import ParameterValue
 
 
+def _project_python_prefix():
+    venv = os.environ.get("XRT_VENV", "")
+    interpreter = os.path.join(venv, "bin", "python")
+    if not venv or not os.path.isfile(interpreter):
+        raise RuntimeError(
+            "XRT_VENV is not set or invalid; source demo/setup.zsh before launching"
+        )
+    return [interpreter]
+
+
 def generate_launch_description():
     config_file = os.path.join(
         get_package_share_directory("xrt_teleop"), "config", "xrt_bridge.yaml"
@@ -31,6 +41,7 @@ def generate_launch_description():
         executable="xrt_bridge",
         name="xrt_teleop_bridge",
         output="screen",
+        prefix=_project_python_prefix(),
         on_exit=Shutdown(reason="XRoboToolkit bridge exited"),
         parameters=[
             config_file,

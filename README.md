@@ -15,6 +15,7 @@ Quest 3 的 MAC 地址为 `50:99:03:0a:38:78`。XRoboToolkit 使用 PC-service �
 ```zsh
 cd "$HOME/Documents/dj_main/XRToolKit/demo"
 ./install_xrt_sdk.zsh
+./clean.zsh
 ./build.zsh
 source "$HOME/Documents/dj_main/XRToolKit/demo/setup.zsh"
 ros2 pkg prefix jaka_driver
@@ -102,7 +103,9 @@ demo/
 │   ├── sr_amr_interfaces/   # AMR 消息/动作接口
 │   └── robot_bringup/       # 双臂 + 底盘整体启动
 ├── vendor/                  # AMR Python SDK wheel
+├── .venv/                   # 工程私有 Python 环境（不提交 Git）
 ├── build.zsh                # 编译 ROS 2 工作区
+├── clean.zsh                # 删除编译和运行生成物
 ├── setup.zsh                # 加载 ROS 与工作区
 ├── install_xrt_sdk.zsh      # 安装 xrobotoolkit_sdk
 ├── launch_quest.zsh         # 自动连接 adb 并启动 Quest APK
@@ -113,6 +116,34 @@ demo/
 ```
 
 `demo` 是改动后的工程；`RemoteCtrl-master` 原工程没有被修改。
+
+## 环境与编译产物隔离
+
+- Python 运行环境固定在 `demo/.venv`。
+- `xrobotoolkit-sdk`、`sros-sdk-py` 和 pip 下载缓存都在 `demo` 内。
+- ROS 2 本身仍使用 `/opt/ros/humble`；venv 通过 `--system-site-packages` 只读访问
+  ROS 2 的系统 Python 包。
+- 节点启动时设置 `PYTHONNOUSERSITE=1`，不会读取或写入用户的全局
+  `~/.local/lib/python*/site-packages`。
+- colcon 输出固定在 `demo/build`、`demo/install`、`demo/log`。
+- colcon 和 ROS 缓存固定在 `demo/.colcon`、`demo/.ros`、`demo/log/ros`。
+- `XRToolKit/build`、`XRToolKit/install`、`XRToolKit/log` 不再使用。
+- `build.zsh` 检测到仓库根目录存在这些编译目录时会拒绝编译，要求先执行清理。
+- xrt bridge 和 AMR Python 节点由 `demo/.venv/bin/python` 显式启动，不依赖系统
+  Python 的第三方包。
+
+清理所有编译和运行生成物，但保留工程 venv：
+
+```zsh
+cd "$HOME/Documents/dj_main/XRToolKit/demo"
+./clean.zsh
+```
+
+如需连同 venv 一起彻底删除：
+
+```zsh
+./clean.zsh --venv
+```
 
 ## 数据链路
 
@@ -176,22 +207,27 @@ sudo apt-get -f install
 ```zsh
 cd "$HOME/Documents/dj_main/XRToolKit/demo"
 ./install_xrt_sdk.zsh
-/usr/bin/python3 -c "import xrobotoolkit_sdk; print('XRT SDK OK')"
+"$HOME/Documents/dj_main/XRToolKit/demo/.venv/bin/python" \
+  -c "import xrobotoolkit_sdk; print('XRT SDK OK')"
 ```
 
-脚本会克隆并编译官方
-`XRoboToolkit-PC-Service-Pybind`，默认放在
-`$HOME/.local/src/XRoboToolkit-PC-Service-Pybind`。上游安装步骤本身仍是
-`setup_ubuntu.sh`，脚本会自动调用它。
+安装脚本优先从 PyPI 安装官方预编译的 `xrobotoolkit-sdk`；如果预编译包不可用，
+再使用或克隆
+`demo/.deps/XRoboToolkit-PC-Service-Pybind` 中的源码执行
+`demo/.venv/bin/python -m pip install .`。官方当前版本不再提供
+`setup_ubuntu.sh`。
 
-如果 ROS 2 节点使用独立的 Python 环境，必须保证运行节点的 Python 也能导入
-`xrobotoolkit_sdk`。
+安装脚本会自动创建 `demo/.venv`，并同时安装 AMR SDK；不会运行
+`pip install --user`。
 
 ### 2. 安装 AMR SDK 与 ROS 依赖
 
+AMR wheel 已由 `install_xrt_sdk.zsh` 安装到 `demo/.venv`，不需要再安装到系统
+Python。可这样验证：
+
 ```zsh
-python3 -m pip install --force-reinstall \
-  "$HOME/Documents/dj_main/XRToolKit/demo/vendor/sros_sdk_py-1.4.1-py3-none-any.whl"
+"$HOME/Documents/dj_main/XRToolKit/demo/.venv/bin/python" \
+  -c "import xrobotoolkit_sdk, sros_sdk_py; print('project env OK')"
 ```
 
 JAKA SDK 所在的 `demo/src/jaka_driver/lib/libjakaAPI.so` 是 ARM64 版本，并且与复制
@@ -206,8 +242,9 @@ file "$HOME/Documents/dj_main/XRToolKit/demo/src/jaka_driver/lib/libjakaAPI.so"
 
 ```zsh
 cd "$HOME/Documents/dj_main/XRToolKit/demo"
+./clean.zsh
 ./build.zsh
-source "$HOME/Documents/dj_main/XRToolKit/demo/install/setup.zsh"
+source "$HOME/Documents/dj_main/XRToolKit/demo/setup.zsh"
 ```
 
 JAKA SDK 是 ARM64 二进制，不能在普通 x86_64 电脑上链接出可在 JAKA 主机运行的节点。
@@ -370,7 +407,7 @@ unset COLCON_CURRENT_PREFIX
 source /opt/ros/humble/setup.zsh
 ```
 
-随后执行 `demo/build.zsh`，再 source `demo/install/setup.zsh`。如果仍然报错，请新开
+随后执行 `demo/build.zsh`，再 source `demo/setup.zsh`。如果仍然报错，请新开
 一个 zsh 终端后执行上述命令，避免旧终端的 `AMENT_PREFIX_PATH` 和 `PYTHONPATH` 继续
 污染环境。
 
@@ -382,12 +419,12 @@ source /opt/ros/humble/setup.zsh
 ```zsh
 cd "$HOME/Documents/dj_main/XRToolKit/demo"
 ./build.zsh
-source "$HOME/Documents/dj_main/XRToolKit/demo/install/setup.zsh"
+source "$HOME/Documents/dj_main/XRToolKit/demo/setup.zsh"
 ```
 
 **`Package 'jaka_driver' not found`**
 
-这通常表示只加载了 `/opt/ros/humble`，没有加载 `demo/install/setup.zsh`，或者工作区
+这通常表示只加载了 `/opt/ros/humble`，没有加载 `demo/setup.zsh`，或者工作区
 从未成功编译。确认下面三条命令分别有输出：
 
 ```zsh
@@ -398,16 +435,28 @@ ros2 pkg prefix jaka_driver
 
 **`No module named xrobotoolkit_sdk`**
 
-先执行下面的安装脚本，再用 ROS 节点实际使用的 `/usr/bin/python3` 验证：
+先执行下面的安装脚本，再用工程 venv 中的 Python 验证：
 
 ```zsh
 cd "$HOME/Documents/dj_main/XRToolKit/demo"
 ./install_xrt_sdk.zsh
-/usr/bin/python3 -c "import xrobotoolkit_sdk; print('XRT SDK OK')"
+"$HOME/Documents/dj_main/XRToolKit/demo/.venv/bin/python" \
+  -c "import xrobotoolkit_sdk; print('XRT SDK OK')"
 ```
 
-验证通过后重新执行 `run_teleop.zsh`。如果只在 conda/venv 中安装成功，而
-`/usr/bin/python3` 无法导入，ROS 节点仍会报同样的错误。
+验证通过后重新执行 `run_teleop.zsh`。不要使用 `/usr/bin/python3` 或
+`pip install --user` 验证，本工程运行节点只使用 `demo/.venv`。
+
+**安装时出现 `bash: setup_ubuntu.sh: No such file or directory`**
+
+这是旧安装流程残留的错误。最新版脚本不再调用该文件，而是执行：
+
+```zsh
+"$HOME/Documents/dj_main/XRToolKit/demo/.venv/bin/python" \
+  -m pip install --upgrade xrobotoolkit-sdk
+```
+
+然后通过 `demo/install_xrt_sdk.zsh` 验证 `demo/.venv` 能导入包。
 
 **左臂日志出现 `ERR_INVALID_HANDLER`**
 

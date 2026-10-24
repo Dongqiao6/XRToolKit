@@ -1,7 +1,7 @@
 CXX ?= g++
 XRT_SERVICE_ROOT ?= /opt/apps/roboticsservice
 HOST_ARCH := $(shell uname -m)
-TARGET := xrt_receive_test
+TARGET := build/native/xrt_receive_test
 
 ifneq ($(filter aarch64 arm64,$(HOST_ARCH)),)
 XRT_ARCH_DIRS := aarch64 arm64 linux_aarch64/64 linux_aarch64
@@ -46,10 +46,12 @@ info: check-sdk
 	@$(CXX) --version | sed -n '1p'
 
 $(TARGET): xrt_receive_test.cpp check-sdk
+	@mkdir -p $(dir $@)
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $< -o $@ $(LDFLAGS) $(LDLIBS)
 
 run: $(TARGET)
 	./$(TARGET)
 
 clean:
-	$(RM) $(TARGET)
+	$(RM) -r build/native
+	@rmdir build 2>/dev/null || true

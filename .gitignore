@@ -1,0 +1,4 @@
+# Generated colcon/ROS outputs must stay under demo/, not the repository root.
+/build/
+/install/
+/log/
