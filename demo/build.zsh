@@ -43,11 +43,12 @@ unset COLCON_CURRENT_PREFIX
 source /opt/ros/humble/setup.zsh
 
 cd "${_xrt_build_ws}"
-colcon build \
+colcon \
+  --log-base "${_xrt_build_ws}/log/build" \
+  build \
   --symlink-install \
   --build-base "${_xrt_build_ws}/build" \
   --install-base "${_xrt_build_ws}/install" \
-  --log-base "${_xrt_build_ws}/log/build" \
   --packages-up-to \
   xrt_teleop jaka_driver sr_amr_control robot_bringup
 

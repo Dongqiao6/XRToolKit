@@ -433,6 +433,24 @@ source "$HOME/Documents/dj_main/XRToolKit/demo/setup.zsh"
 ros2 pkg prefix jaka_driver
 ```
 
+**`colcon: error: unrecognized arguments: --log-base`**
+
+`--log-base` 是 colcon 的全局参数，必须写在 `build` 前面。当前 `build.zsh` 已按以下
+顺序调用：
+
+```zsh
+colcon \
+  --log-base "$PWD/log/build" \
+  build \
+  --build-base "$PWD/build" \
+  --install-base "$PWD/install" \
+  --packages-up-to xrt_teleop jaka_driver sr_amr_control robot_bringup
+```
+
+如果终端仍报这个错误，说明执行的 `build.zsh` 还是旧版本。检查
+`grep -n -- "--log-base" build.zsh`，必要时重新同步工程文件后执行
+`./clean.zsh && ./build.zsh`。
+
 **`No module named xrobotoolkit_sdk`**
 
 先执行下面的安装脚本，再用工程 venv 中的 Python 验证：
