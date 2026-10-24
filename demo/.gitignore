@@ -1,5 +1,6 @@
 /xrt_receive_test
 /xrt_received.jsonl
+/.quest_ip
 /build/
 /install/
 /log/

@@ -10,10 +10,11 @@ Quest 3 的 MAC 地址为 `50:99:03:0a:38:78`。XRoboToolkit 使用 PC-service �
 
 ## 修改后最短运行流程
 
-首次使用先编译工程。以下命令在 zsh 中执行：
+首次使用先安装 XRoboToolkit Python SDK，再编译工程。以下命令在 zsh 中执行：
 
 ```zsh
 cd "$HOME/Documents/dj_main/XRToolKit/demo"
+./install_xrt_sdk.zsh
 ./build.zsh
 source "$HOME/Documents/dj_main/XRToolKit/demo/setup.zsh"
 ros2 pkg prefix jaka_driver
@@ -33,16 +34,20 @@ cd /opt/apps/roboticsservice
 
 **Quest 3：发送数据**
 
-在头显中打开 `XRoboToolkit`，输入 JAKA 主机的局域网 IP，开启控制器 Tracking 和
-Send。这里不再运行旧的 `quest_reader`，也不再需要旧 APK 的 adb logcat。
+不需要每次手工执行 adb。下面的 `run_teleop.zsh` 会自动连接 adb、启动 Quest 上的
+XRoboToolkit APK，并加载 ROS 工作区。第一次建议用 USB 连接一次 Quest，让脚本建立
+无线 adb 并保存 IP；无线 adb 保持开启时可直接无线启动。Quest 重启后若无线调试失效，
+再用 USB 连接运行一次即可。也可以手动在头显中打开 `XRoboToolkit`。
+
+在 APK 中输入 JAKA 主机的局域网 IP，开启控制器 Tracking 和 Send。这里不再运行旧的
+`quest_reader`，也不再需要旧 APK 的 adb logcat。
 
 **终端 2：启动 JAKA 双臂和夹爪**
 
 ```zsh
 cd "$HOME/Documents/dj_main/XRToolKit/demo"
-source "$HOME/Documents/dj_main/XRToolKit/demo/setup.zsh"
 
-ros2 launch jaka_driver dual_arm_teleop.launch.py \
+./run_teleop.zsh \
   robot_left_ip:=192.168.71.37 \
   robot_right_ip:=192.168.71.36 \
   gripper_rs485_channel:=1 \
@@ -50,6 +55,9 @@ ros2 launch jaka_driver dual_arm_teleop.launch.py \
   gripper_speed:=40 \
   gripper_configure_tio:=false
 ```
+
+`run_teleop.zsh` 会依次启动 Quest APK、加载 ROS/zsh 环境，再执行
+`ros2 launch jaka_driver dual_arm_teleop.launch.py`。
 
 按住左手柄 Grip 控制左臂，按住右手柄 Grip 控制右臂，松开即停止。左手 Trigger
 控制左夹爪，右手 Trigger 控制右夹爪。首次测试应空载、低速，并先分别测试左右臂。
@@ -68,8 +76,18 @@ ros2 launch robot_bringup RC_robot_bringup.launch.py \
   gripper_configure_tio:=false
 ```
 
-以后每次运行，如果工作区代码和编译选项没有变化，只需在启动终端中执行
-`source "$HOME/Documents/dj_main/XRToolKit/demo/setup.zsh"`，然后运行对应的
+启动前必须给左、右 JAKA 控制器上电。左臂未上电时会出现
+`left login FAILED ... ERR_INVALID_HANDLER`；请上电后重新启动整套 launch。
+
+以后每次运行，如果工作区代码和编译选项没有变化，可直接执行
+`./run_teleop.zsh ...`。如果自动 adb 启动失败，可设置 Quest IP 后重试：
+
+```zsh
+QUEST_IP=<Quest IP> ./run_teleop.zsh
+```
+
+APK 已经打开时也可以先执行
+`source "$HOME/Documents/dj_main/XRToolKit/demo/setup.zsh"`，再运行对应的
 `ros2 launch` 命令。
 
 ## 目录
@@ -84,6 +102,11 @@ demo/
 │   ├── sr_amr_interfaces/   # AMR 消息/动作接口
 │   └── robot_bringup/       # 双臂 + 底盘整体启动
 ├── vendor/                  # AMR Python SDK wheel
+├── build.zsh                # 编译 ROS 2 工作区
+├── setup.zsh                # 加载 ROS 与工作区
+├── install_xrt_sdk.zsh      # 安装 xrobotoolkit_sdk
+├── launch_quest.zsh         # 自动连接 adb 并启动 Quest APK
+├── run_teleop.zsh           # 一键启动 Quest + 双臂遥操作
 ├── xrt_receive_test.cpp     # PC-service 原始数据诊断程序
 ├── Makefile
 └── .gitignore
@@ -151,11 +174,15 @@ sudo apt-get -f install
 安装 Python SDK（`xrobotoolkit_sdk`）：
 
 ```zsh
-git clone https://github.com/XR-Robotics/XRoboToolkit-PC-Service-Pybind.git
-cd XRoboToolkit-PC-Service-Pybind
-bash setup_ubuntu.sh
-python3 -c "import xrobotoolkit_sdk"
+cd "$HOME/Documents/dj_main/XRToolKit/demo"
+./install_xrt_sdk.zsh
+/usr/bin/python3 -c "import xrobotoolkit_sdk; print('XRT SDK OK')"
 ```
+
+脚本会克隆并编译官方
+`XRoboToolkit-PC-Service-Pybind`，默认放在
+`$HOME/.local/src/XRoboToolkit-PC-Service-Pybind`。上游安装步骤本身仍是
+`setup_ubuntu.sh`，脚本会自动调用它。
 
 如果 ROS 2 节点使用独立的 Python 环境，必须保证运行节点的 Python 也能导入
 `xrobotoolkit_sdk`。
@@ -204,11 +231,18 @@ cd /opt/apps/roboticsservice
 3. 打开控制器 Tracking 和 Send。
 4. 确认头显与 JAKA 主机在同一可互访网段，并允许 PC-service 所需端口通过防火墙。
 
-如需通过 adb 从电脑启动 APK：
+推荐直接使用自动 adb 启动脚本。该脚本优先使用已连接设备，其次读取
+`demo/.quest_ip`，最后按 MAC 地址查询 ARP 表：
 
 ```zsh
-adb shell monkey -p com.xrobotoolkit.client.quest \
-  -c android.intent.category.LAUNCHER 1
+"$HOME/Documents/dj_main/XRToolKit/demo/launch_quest.zsh"
+```
+
+第一次连接时建议接 USB；脚本会保存 Quest IP 并尝试建立 `5555` 无线 adb。后续运行
+不需要再手工执行 adb 命令。若网关隔离广播或 ARP 查询失败，可以显式指定：
+
+```zsh
+QUEST_IP=192.168.x.x "$HOME/Documents/dj_main/XRToolKit/demo/launch_quest.zsh"
 ```
 
 ### 3. 先验证 XRoboToolkit 数据
@@ -364,8 +398,22 @@ ros2 pkg prefix jaka_driver
 
 **`No module named xrobotoolkit_sdk`**
 
-重新执行 PC-service Pybind 的 `setup_ubuntu.sh`，并确认当前 ROS 节点使用的 Python
-环境与安装 SDK 的环境一致。
+先执行下面的安装脚本，再用 ROS 节点实际使用的 `/usr/bin/python3` 验证：
+
+```zsh
+cd "$HOME/Documents/dj_main/XRToolKit/demo"
+./install_xrt_sdk.zsh
+/usr/bin/python3 -c "import xrobotoolkit_sdk; print('XRT SDK OK')"
+```
+
+验证通过后重新执行 `run_teleop.zsh`。如果只在 conda/venv 中安装成功，而
+`/usr/bin/python3` 无法导入，ROS 节点仍会报同样的错误。
+
+**左臂日志出现 `ERR_INVALID_HANDLER`**
+
+这是左 JAKA 控制器未上电或网络不可达时登录失败。先给左右控制柜上电，确认
+`192.168.71.37` 可 ping 通，再重新启动整套 launch。bridge 节点退出时，launch 会同时
+关闭双臂节点，因此随后出现的 `rcl context is invalid` 是关停造成的连带日志。
 
 **PC-service 启动失败或在 x86 上运行 ARM64 SDK**
 

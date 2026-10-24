@@ -18,7 +18,7 @@ typeset _xrt_setup_ws="${_xrt_setup_file:A:h}"
 # 防止旧终端中导出的 COLCON_CURRENT_PREFIX 让 ROS setup.zsh 去找另一个
 # 工作区下并不存在的 setup.sh/setup.bash。
 unset COLCON_CURRENT_PREFIX
-source /opt/ros/humble/setup.zsh
+source /opt/ros/humble/setup.zsh || return 1
 
 if [[ ! -f "${_xrt_setup_ws}/install/setup.zsh" ]]; then
   print -u2 "工作区尚未编译：${_xrt_setup_ws}/install/setup.zsh 不存在。"
@@ -27,7 +27,18 @@ if [[ ! -f "${_xrt_setup_ws}/install/setup.zsh" ]]; then
   return 1
 fi
 
-source "${_xrt_setup_ws}/install/setup.zsh"
+if ! /usr/bin/python3 -c "import xrobotoolkit_sdk" >/dev/null 2>&1; then
+  print -u2 "当前 ROS 节点使用的 /usr/bin/python3 无法导入 xrobotoolkit_sdk。"
+  print -u2 "请运行：'${_xrt_setup_ws}/install_xrt_sdk.zsh'"
+  unset _xrt_setup_file _xrt_setup_ws
+  return 1
+fi
+
+source "${_xrt_setup_ws}/install/setup.zsh" || {
+  print -u2 "无法加载 ${_xrt_setup_ws}/install/setup.zsh。"
+  unset _xrt_setup_file _xrt_setup_ws
+  return 1
+}
 print "ROS 2 Humble 和 XRToolKit demo 工作区已加载。"
 
 unset _xrt_setup_file _xrt_setup_ws
