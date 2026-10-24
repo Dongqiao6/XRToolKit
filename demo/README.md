@@ -3,7 +3,27 @@
 此程序通过 `XRoboToolkit-PC-Service` 自带的 C++ SDK 接收 Quest 3 数据。它不依赖
 ROS，也不依赖 Python pybind 包。
 
+> Jaka 主机是 ARM64 时，必须安装 PC-service 的 `arm64` 版本。
+> `amd64`/`x64` 版本中的 `libPXREARobotSDK.so` 不能在 Jaka 上链接或运行。
+
 ## 1. 启动 PC-service
+
+在 Jaka 主机的 ARM64 Ubuntu 上安装官方 ARM64 包：
+
+```bash
+sudo apt-get update
+sudo apt-get install -y build-essential
+sudo dpkg -i XRoboToolkit-PC-Service_1.0.0.0_arm64.deb
+sudo apt-get -f install
+```
+
+可以先检查架构和安装包：
+
+```bash
+uname -m                              # 应为 aarch64
+dpkg --print-architecture             # 应为 arm64
+dpkg -s roboticsservice | grep Architecture
+```
 
 如果 PC-service 尚未运行，先在一个终端启动并保持运行：
 
@@ -22,6 +42,29 @@ make
 ./xrt_receive_test
 ```
 
+`Makefile` 会根据 `uname -m` 自动查找 x86_64 或 ARM64 版本的
+`libPXREARobotSDK.so`。如果 PC-service 安装在其他目录，可执行：
+
+```bash
+make XRT_SERVICE_ROOT=/PC-service安装目录
+```
+
+编译失败时先执行下面的命令，它会打印当前架构以及实际找到的 SDK 头文件和库：
+
+```bash
+make info
+```
+
+如果自动查找失败，可以在 Jaka 上定位实际文件：
+
+```bash
+find /opt/apps/roboticsservice/SDK -name PXREARobotSDK.h -print
+find /opt/apps/roboticsservice/SDK -name libPXREARobotSDK.so -print
+find /opt/apps/roboticsservice/SDK -name libPXREARobotSDK.so -exec file {} \;
+```
+
+`file` 输出必须是 `ARM aarch64`，不能是 `x86-64`。
+
 默认一直运行到按 `Ctrl+C`。也可以指定采集秒数和输出文件：
 
 ```bash
@@ -32,7 +75,7 @@ make
 不同安装路径或 ARM64 主机可覆盖 SDK 路径：
 
 ```bash
-make XRT_SDK_DIR=/actual/sdk/library/path
+make XRT_SDK_DIR=/实际库目录 XRT_SDK_INCLUDE_DIR=/实际头文件目录
 ```
 
 ## 3. 在 Quest 3 中发送数据
