@@ -1,2 +1,7 @@
 /xrt_receive_test
 /xrt_received.jsonl
+/build/
+/install/
+/log/
+__pycache__/
+*.py[cod]

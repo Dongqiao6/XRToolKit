@@ -1,0 +1,21 @@
+xrt_teleop_bridge:
+  ros__parameters:
+    left_target_topic: /rc_ctrl/left_target
+    right_target_topic: /rc_ctrl/right_target
+    button_topic: /rc_ctrl/button
+    publish_rate: 125.0
+    smooth_alpha: 0.4
+    pose_scale: 1.0
+    grip_threshold: 0.5
+    enable_left: true
+    enable_right: true
+    robot_base_frame: world
+    quest_mac: "50:99:03:0a:38:78"
+
+    # XRoboToolkit/OpenXR headset axes -> JAKA robot axes. Keep this mapping
+    # aligned with RemoteCtrl's Quest reader and the official XRoboToolkit demo.
+    headset_to_robot: [0.0, 0.0, -1.0, -1.0, 0.0, 0.0, 0.0, 1.0, 0.0]
+
+    # Optional Quest-origin calibration in the robot base frame.
+    tf_translation: [0.0, 0.0, 0.0]
+    tf_rotation: [1.0, 0.0, 0.0, 0.0]
