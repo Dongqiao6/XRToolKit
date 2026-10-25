@@ -82,6 +82,9 @@ ros2 launch robot_bringup RC_robot_bringup.launch.py \
 启动前必须给左、右 JAKA 控制器上电。左臂未上电时会出现
 `left login FAILED ... ERR_INVALID_HANDLER`；请上电后重新启动整套 launch。
 
+如果还需要把 D405 全局画面显示到 Quest 中，另开一个终端运行 D405 视频发送端，并在
+Remote Vision 中选择 `REALSENSE_D405`。完整步骤见“D405 低时延远程视觉”章节。
+
 以后每次运行，如果工作区代码和编译选项没有变化，可直接执行
 `./run_teleop.zsh ...`。如果自动 adb 启动失败，可设置 Quest IP 后重试：
 
@@ -111,6 +114,10 @@ demo/
 ├── setup.zsh                # 加载 ROS 与工作区
 ├── install_xrt_sdk.zsh      # 安装 xrobotoolkit_sdk
 ├── launch_quest.zsh         # 自动连接 adb 并启动 Quest APK
+├── setup_d405_profile.zsh   # 向 APK 注入 REALSENSE_D405 视频源
+├── install_vision_deps.zsh  # 安装 GStreamer/V4L2 视频依赖
+├── run_d405_vision.zsh      # 启动 D405 H.264 发送端
+├── d405_vision/             # D405 视频源、协议发送端和配置
 ├── run_teleop.zsh           # 一键启动 Quest + 双臂遥操作
 ├── xrt_receive_test.cpp     # PC-service 原始数据诊断程序
 ├── Makefile
@@ -165,6 +172,16 @@ XRoboToolkit PC-service (JAKA 主机)
 桥接节点以 125 Hz 读取 SDK，沿用旧工程的位姿低通滤波、坐标映射、手柄按键布局和
 ROS 话题。控制消费端无需感知输入已经由旧 APK 换为 XRoboToolKit。
 
+远程视觉使用另一条独立链路，不经过 PC-service 的位姿 TCP 通道：
+
+```text
+Intel RealSense D405
+        │ USB / V4L2
+D405 GStreamer 编码器（JAKA 主机）
+        │ H.264 / TCP 13579 + 12345
+XRoboToolkit Remote Vision（Quest 3）
+```
+
 以下命令均按 zsh 编写，使用 ROS 和工作区生成的 `setup.zsh`。
 
 ## 固定设备信息
@@ -176,6 +193,8 @@ ROS 话题。控制消费端无需感知输入已经由旧 APK 换为 XRoboToolK
 | AMR 底盘 | `192.168.71.50` |
 | Quest 3 MAC | `50:99:03:0a:38:78` |
 | Quest APK 包名 | `com.xrobotoolkit.client.quest` |
+| D405 彩色流 | USB V4L2，默认 `1280x720@30` |
+| Remote Vision 控制端口 | TCP `13579` |
 
 以上 JAKA 和底盘地址沿用原工程，未作修改。
 
@@ -450,6 +469,130 @@ grip_release_threshold:=0.4
 - 姿态方向由同一坐标矩阵变换；旋转增量随后由 JAKA 驱动发送。
 
 先保持默认值测试。只有在方向或零点不符合现场安装关系时才修改标定参数。
+
+## D405 低时延远程视觉
+
+现有 release APK 的 Remote Vision 可在运行时读取：
+
+```text
+/sdcard/Android/data/<APK 包名>/files/video_source.yml
+```
+
+因此不需要先重编 APK。工程提供 `REALSENSE_D405` 视频源配置，并沿用 APK 已验证的
+H.264 TCP 和 `ZEDMINI` 解码路径。
+
+D405 是单目 RGB 相机，而当前 APK 的平面 Remote Vision 使用左右眼分屏贴图。发送端
+会把同一幅 D405 图像复制成左右完全相同的 `2560x720` 侧并排画面，双眼中看到的图像
+一致，不会把单幅图像错误地拆给左右眼。它不提供真实立体深度。
+
+### 1. 安装视频依赖
+
+```zsh
+cd "$HOME/Documents/dj_main/XRToolKit/demo"
+./install_vision_deps.zsh
+```
+
+这会安装 GStreamer、`x264enc`、V4L2 工具和 Python GI 绑定。
+
+### 2. 确认 D405 设备节点
+
+```zsh
+v4l2-ctl --list-devices
+v4l2-ctl --list-formats-ext -d /dev/video0
+```
+
+在输出中找到 Intel RealSense D405 对应的彩色视频节点。若彩色节点不是
+`/dev/video0`，后续命令使用实际节点，例如：
+
+```zsh
+./run_d405_vision.zsh --device /dev/video2
+```
+
+可先检查 GStreamer 编码器和管道配置：
+
+```zsh
+./run_d405_vision.zsh --check --device /dev/video0
+```
+
+D405 建议先使用 `1280x720@30`。默认输出为 Remote Vision 所需的
+`2560x720@30`、4 Mbps。
+
+发送端默认按 RealSense 常见的 `YUY2` V4L2 格式采集。如果
+`v4l2-ctl --list-formats-ext` 中彩色节点只提供 `MJPG`，改用：
+
+```zsh
+./run_d405_vision.zsh --device /dev/video0 --capture-format MJPG
+```
+
+### 3. 向 Quest APK 添加 D405 选项
+
+先运行 `launch_quest.zsh` 建立 adb 连接，然后执行：
+
+```zsh
+cd "$HOME/Documents/dj_main/XRToolKit/demo"
+./setup_d405_profile.zsh
+```
+
+脚本会自动选择 `com.xrobotoolkit.client.quest` 或
+`com.xrobotoolkit.client`，写入 `video_source.yml` 并重新启动 APK。Remote Vision
+下拉框中应出现：
+
+```text
+REALSENSE_D405
+```
+
+如果该选项没有出现，可以继续选择原来的 `ZEDMINI`，发送端也兼容该类型。
+
+### 4. 启动 D405 发送端
+
+在 JAKA 主机上另开终端：
+
+```zsh
+cd "$HOME/Documents/dj_main/XRToolKit/demo"
+./run_d405_vision.zsh --device /dev/video0
+```
+
+看到下面日志表示正在等待 Quest：
+
+```text
+Waiting for Quest Remote Vision on 0.0.0.0:13579
+```
+
+如果 CPU 负载较高或 Wi-Fi 延迟大，可降到 `848x480@30` 采集并按需降低码率：
+
+```zsh
+./run_d405_vision.zsh \
+  --device /dev/video0 \
+  --source-width 848 \
+  --source-height 480 \
+  --fps 30 \
+  --bitrate 2000000
+```
+
+Jetson/Orin 主机如已安装 NVIDIA GStreamer 编码器，可尝试：
+
+```zsh
+./run_d405_vision.zsh --encoder nvv4l2h264enc
+```
+
+### 5. 在 Quest 中打开
+
+1. 保持 PC-service 和遥操作正常运行。
+2. 在 Quest 的 Remote Vision 中选择 `REALSENSE_D405`。
+3. 点击 Listen，输入 JAKA 主机 IP。
+4. 点击 Confirm。
+
+视频窗口固定在头显前方，因此移动或转头时始终显示 D405 的全局视角。D405 安装方向
+决定画面是否倒置；若需要旋转 180°，后续应在发送端增加旋转参数，而不是旋转头显
+整体坐标。
+
+### 网络和延迟
+
+- Remote Vision 控制连接使用 TCP `13579`。
+- 编码后的 H.264 视频由主机主动连接头显提供的 TCP 端口，通常为 `12345`。
+- 保持 JAKA 主机有线连接，Quest 使用 5 GHz Wi-Fi，关闭 Wi-Fi 省电。
+- 发送端使用 `zerolatency`、无 B 帧、1 帧以内的关键帧间隔和丢弃旧帧队列。
+- 该视频链路与手柄到 PC-service 的位姿链路相互独立，不会阻塞遥操作。
 
 ## 检查话题
 
