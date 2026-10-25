@@ -21,6 +21,7 @@ int main()
   using jaka_teleop::quat_normalize;
   using jaka_teleop::quat_rotation_angle;
   using jaka_teleop::quat_scaled_to_angle;
+  using jaka_teleop::grip_state;
 
   Quaternion half_turn;
   half_turn.s = 0.0;
@@ -48,5 +49,10 @@ int main()
   const Quaternion product = quat_multiply(identity, quarter_turn);
   assert(almost_equal(product.s, quarter_turn.s));
   assert(almost_equal(product.z, quarter_turn.z));
+
+  assert(!grip_state(false, 0.5, 0.6, 0.4));
+  assert(grip_state(false, 0.61, 0.6, 0.4));
+  assert(grip_state(true, 0.5, 0.6, 0.4));
+  assert(!grip_state(true, 0.39, 0.6, 0.4));
   return 0;
 }

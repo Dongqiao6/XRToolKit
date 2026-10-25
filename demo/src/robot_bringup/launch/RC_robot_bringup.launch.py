@@ -80,18 +80,27 @@ def generate_launch_description():
     use_rpy_ctrl_arg = DeclareLaunchArgument(
         'use_rpy_ctrl', default_value='true',
         description='true = 6D teleop including orientation; false = position only')
+    rotation_scale_arg = DeclareLaunchArgument(
+        'rotation_scale', default_value='0.5',
+        description='Relative controller rotation mapped to robot orientation (0..1)')
     rotation_gain_arg = DeclareLaunchArgument(
-        'rotation_gain', default_value='1.0',
+        'rotation_gain', default_value='0.5',
         description='Fraction of remaining controller rotation applied per cycle (0..1)')
     rotation_deadband_arg = DeclareLaunchArgument(
         'rotation_deadband_rad', default_value='0.005',
         description='Ignore controller orientation changes below this angle in radians')
     rotation_max_step_arg = DeclareLaunchArgument(
-        'rotation_max_step_rad', default_value='0.005',
+        'rotation_max_step_rad', default_value='0.0015',
         description='Maximum commanded rotation per 8 ms servo cycle in radians')
     rotation_sign_arg = DeclareLaunchArgument(
         'rotation_sign', default_value='1',
         description='Robot rotation direction: 1 or -1, applied to all rotation axes')
+    grip_press_threshold_arg = DeclareLaunchArgument(
+        'grip_press_threshold', default_value='0.6',
+        description='Grip value required to engage arm control')
+    grip_release_threshold_arg = DeclareLaunchArgument(
+        'grip_release_threshold', default_value='0.4',
+        description='Grip value below which arm control is released')
     enable_y_limit_arg = DeclareLaunchArgument(
         'enable_y_limit', default_value='true',
         description='true = clamp arm TCP y (left > -110 mm, right < 110 mm)')
@@ -143,10 +152,13 @@ def generate_launch_description():
             'gripper_use_button': LaunchConfiguration('gripper_use_button'),
             'gripper_button_index': LaunchConfiguration('gripper_button_index'),
             'use_rpy_ctrl': LaunchConfiguration('use_rpy_ctrl'),
+            'rotation_scale': LaunchConfiguration('rotation_scale'),
             'rotation_gain': LaunchConfiguration('rotation_gain'),
             'rotation_deadband_rad': LaunchConfiguration('rotation_deadband_rad'),
             'rotation_max_step_rad': LaunchConfiguration('rotation_max_step_rad'),
             'rotation_sign': LaunchConfiguration('rotation_sign'),
+            'grip_press_threshold': LaunchConfiguration('grip_press_threshold'),
+            'grip_release_threshold': LaunchConfiguration('grip_release_threshold'),
             'enable_y_limit': LaunchConfiguration('enable_y_limit'),
         }.items(),
     )
@@ -186,10 +198,13 @@ def generate_launch_description():
         gripper_use_button_arg,
         gripper_button_index_arg,
         use_rpy_ctrl_arg,
+        rotation_scale_arg,
         rotation_gain_arg,
         rotation_deadband_arg,
         rotation_max_step_arg,
         rotation_sign_arg,
+        grip_press_threshold_arg,
+        grip_release_threshold_arg,
         enable_y_limit_arg,
         connect_ip_arg,
         connect_username_arg,

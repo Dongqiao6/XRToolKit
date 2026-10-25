@@ -63,6 +63,8 @@ struct CtrlPose {
 // concurrently by servo_p and the re-arm sequence.
 std::atomic<bool> gripped{false};
 std::atomic<bool> rearming{false};
+std::atomic<bool> hold_stream_enabled{false};
+int hold_stream_failure_count = 0;
 // Latest grip state, mirrored here so the re-arm thread can check whether the
 // grip is STILL held when it finishes (a press-then-release during re-arm must
 // not leave the arm tracking).
@@ -89,10 +91,13 @@ double gripper_trigger_deadband = 0.02; // minimal change to send new Grip()
 double prev_gripper_trigger = 0.0;
 std::unique_ptr<pgi140::Pgi140Gripper> gripper;
 bool use_rpy_ctrl = true;   // true = 6D teleop, false = position-only fallback
-double rotation_gain = 1.0; // fraction of remaining controller rotation per cycle
+double rotation_scale = 0.5; // relative hand rotation mapped to the robot
+double rotation_gain = 0.5; // fraction of remaining controller rotation per cycle
 double rotation_deadband = 0.005;  // rad
-double rotation_max_step = 0.005;  // rad per 8 ms servo cycle (~35.8 deg/s)
+double rotation_max_step = 0.0015; // rad per 8 ms servo cycle (~10.7 deg/s)
 int rotation_sign = 1;             // 1 or -1 for all robot rotation axes
+double grip_press_threshold = 0.6;
+double grip_release_threshold = 0.4;
 bool enable_y_limit = true; // true = clamp arm TCP y to its workspace range
 bool arm_is_right = false;  // mirror of arm_name == "right"
 double arm_tcp_y_at_grip = 0.0; // arm's absolute TCP y captured at grip press (mm)
@@ -132,8 +137,8 @@ constexpr double Y_LIMIT_MM = 110.0;         // workspace y boundary: left > -11
 // feed-forward pattern as the working demo (servo_p(&cart, INCR) with a fixed
 // increment). The grip-press pose is the origin: because INCR accumulates these
 // increments, the arm ends up exactly at "origin + offset", returns to start
-// when the controller returns to its origin, and holds when we stop sending.
-// No IK and no read-back, so nothing can diverge/oscillate.
+// when the controller returns to its origin, and holds under the continuous
+// zero-increment stream after release. JAKA performs the Cartesian-to-joint IK.
 //
 // Rotation is relative to the controller orientation captured at Grip press.
 // The bridge has already converted the controller quaternion to the robot base
@@ -190,6 +195,13 @@ void servo_cartesian(JAKAZuRobot &robot,
         Quaternion desired_rotation = jaka_teleop::quat_multiply(
             ctrl_now.quat, jaka_teleop::quat_conjugate(ctrl_origin.quat));
         desired_rotation = jaka_teleop::quat_normalized(desired_rotation);
+        if (rotation_scale < 1.0)
+        {
+            const double desired_angle =
+                jaka_teleop::quat_rotation_angle(desired_rotation);
+            desired_rotation = jaka_teleop::quat_scaled_to_angle(
+                desired_rotation, desired_angle * rotation_scale);
+        }
 
         // Rotation which has not yet reached the robot.
         Quaternion remaining_rotation = jaka_teleop::quat_multiply(
@@ -309,7 +321,7 @@ void servo_cartesian(JAKAZuRobot &robot,
     }
 }
 
-void servo_hold(JAKAZuRobot &robot)
+bool servo_hold(JAKAZuRobot &robot)
 {
     CartesianPose hold;
     hold.tran.x = 0.0;
@@ -321,8 +333,40 @@ void servo_hold(JAKAZuRobot &robot)
     int ret = robot.servo_p(&hold, MoveMode::INCR);
     if (ret != 0)
     {
-        RCLCPP_WARN(rclcpp::get_logger("rc_ctrl"),
-                    "[%s] servo_p HOLD failed: %s", arm_name.c_str(), mapErr[ret].c_str());
+        if (debug)
+        {
+            RCLCPP_WARN(rclcpp::get_logger("rc_ctrl"),
+                        "[%s] servo_p HOLD failed: %s", arm_name.c_str(), mapErr[ret].c_str());
+        }
+        return false;
+    }
+    return true;
+}
+
+// JAKA servo_p must be fed continuously. A one-shot zero increment is not a
+// reliable brake on this controller, so keep publishing zero increments after
+// Grip release. This is the equivalent of vr-teleop-kit continuing to send the
+// last joint target while its clutch is disengaged.
+void hold_stream_callback()
+{
+    if (!arm_ok || gripped || rearming || !hold_stream_enabled)
+        return;
+
+    if (!servo_hold(robot))
+    {
+        ++hold_stream_failure_count;
+        if (hold_stream_failure_count >= 5)
+        {
+            hold_stream_enabled = false;
+            hold_stream_failure_count = 0;
+            RCLCPP_WARN(rclcpp::get_logger("rc_ctrl"),
+                        "[%s] stopping hold stream after repeated servo_p failures",
+                        arm_name.c_str());
+        }
+    }
+    else
+    {
+        hold_stream_failure_count = 0;
     }
 }
 
@@ -462,14 +506,17 @@ void rearm_worker()
     rearming = false;
 }
 
-// Update the grip state for one arm. On the rising edge (grip crosses 0.5) we
-// kick off a background re-arm + origin capture; on release we send one explicit
-// hold and stop tracking. While not gripped the target callback sends nothing
-// (stopping INCR already holds the arm), so no per-cycle hold is needed.
+// Update the grip state for one arm. Separate press/release thresholds form a
+// Schmitt trigger, preventing a noisy grip value near 0.5 from repeatedly
+// engaging and releasing the arm.
 void handle_grip(float value)
 {
-    bool now = value > 0.5f;
+    const bool was_pressed = grip_now.load();
+    const bool now = jaka_teleop::grip_state(
+        was_pressed, value, grip_press_threshold, grip_release_threshold);
     grip_now = now;  // mirror current grip so the re-arm thread can check it
+    if (now)
+        hold_stream_enabled = false;
     if (now && !gripped && !rearming)
     {
         // Reap a previous, already-finished re-arm thread before overwriting the
@@ -479,10 +526,12 @@ void handle_grip(float value)
         rearming = true;
         rearm_thread = std::thread(rearm_worker);
     }
-    else if (!now && gripped)
+    else if (!now)
     {
-        servo_hold(robot);
         gripped = false;
+        const bool hold_already_streaming = hold_stream_enabled.exchange(true);
+        if (!hold_already_streaming && !rearming && arm_ok)
+            servo_hold(robot);
     }
 }
 
@@ -498,8 +547,7 @@ void target_callback(const geometry_msgs::msg::PoseStamped::SharedPtr msg)
     {
         servo_cartesian(robot, msg, ctrl_origin, ctrl_prev, arm_name.c_str());
     }
-    // Not gripped: send nothing. Stopping the INCR stream already holds the arm;
-    // the release edge in handle_grip sends one explicit servo_hold.
+    // Not gripped: the independent 125 Hz timer keeps sending zero increments.
     if(debug)
     {
         RCLCPP_INFO(rclcpp::get_logger("rc_ctrl"),
@@ -739,22 +787,28 @@ int main(int argc, char *argv[])
     
    debug = node->declare_parameter<bool>("debug", false);
    use_rpy_ctrl = node->declare_parameter<bool>("use_rpy_ctrl", true);
-   rotation_gain = node->declare_parameter<double>("rotation_gain", 1.0);
+   rotation_scale = node->declare_parameter<double>("rotation_scale", 0.5);
+   rotation_gain = node->declare_parameter<double>("rotation_gain", 0.5);
    rotation_deadband = node->declare_parameter<double>(
        "rotation_deadband_rad", 0.005);
    rotation_max_step = node->declare_parameter<double>(
-       "rotation_max_step_rad", 0.005);
+       "rotation_max_step_rad", 0.0015);
    rotation_sign = node->declare_parameter<int>("rotation_sign", 1);
+   grip_press_threshold = node->declare_parameter<double>(
+       "grip_press_threshold", 0.6);
+   grip_release_threshold = node->declare_parameter<double>(
+       "grip_release_threshold", 0.4);
    enable_y_limit = node->declare_parameter<bool>("enable_y_limit", true);
 
+   rotation_scale = std::max(0.0, std::min(1.0, rotation_scale));
    rotation_gain = std::max(0.0, std::min(1.0, rotation_gain));
    rotation_deadband = std::max(0.0, rotation_deadband);
    if (rotation_max_step <= 0.0)
    {
        RCLCPP_WARN(rclcpp::get_logger("rc_ctrl"),
-                   "[%s] rotation_max_step_rad must be positive; using 0.005",
+                   "[%s] rotation_max_step_rad must be positive; using 0.0015",
                    arm_name.c_str());
-       rotation_max_step = 0.005;
+       rotation_max_step = 0.0015;
    }
    if (rotation_sign != 1 && rotation_sign != -1)
    {
@@ -762,6 +816,16 @@ int main(int argc, char *argv[])
                    "[%s] rotation_sign must be 1 or -1; using 1",
                    arm_name.c_str());
        rotation_sign = 1;
+   }
+   grip_press_threshold = std::max(0.0, std::min(1.0, grip_press_threshold));
+   grip_release_threshold = std::max(0.0, std::min(1.0, grip_release_threshold));
+   if (grip_press_threshold <= grip_release_threshold)
+   {
+       RCLCPP_WARN(rclcpp::get_logger("rc_ctrl"),
+                   "[%s] grip_press_threshold must exceed grip_release_threshold; "
+                   "using 0.6/0.4", arm_name.c_str());
+       grip_press_threshold = 0.6;
+       grip_release_threshold = 0.4;
    }
 
 
@@ -779,15 +843,23 @@ int main(int argc, char *argv[])
         target_topic, rclcpp::QoS(1), target_callback);
     auto button_sub = node->create_subscription<sensor_msgs::msg::Joy>(
         button_topic, rclcpp::QoS(1), button_callback);
+    auto hold_timer = node->create_wall_timer(
+        std::chrono::milliseconds(8), hold_stream_callback);
+    (void)hold_timer;
 
     RCLCPP_INFO(rclcpp::get_logger("rc_ctrl"),
                 "rc_ctrl_node started: arm=%s, ip=%s, tracking %s (grip axis %d)",
                 arm_name.c_str(), ip.c_str(), target_topic.c_str(), grip_axis);
     RCLCPP_INFO(rclcpp::get_logger("rc_ctrl"),
-                "[%s] orientation control: enabled=%s gain=%.2f deadband=%.4f rad "
-                "max_step=%.4f rad sign=%d",
+                "[%s] orientation control: enabled=%s scale=%.2f gain=%.2f "
+                "deadband=%.4f rad max_step=%.4f rad sign=%d",
                 arm_name.c_str(), use_rpy_ctrl ? "true" : "false",
-                rotation_gain, rotation_deadband, rotation_max_step, rotation_sign);
+                rotation_scale, rotation_gain, rotation_deadband,
+                rotation_max_step, rotation_sign);
+    RCLCPP_INFO(rclcpp::get_logger("rc_ctrl"),
+                "[%s] grip hysteresis: press>%.2f release<%.2f; "
+                "continuous 125 Hz hold when disengaged",
+                arm_name.c_str(), grip_press_threshold, grip_release_threshold);
 
     rclcpp::spin(node);
 

@@ -324,8 +324,9 @@ Grip 后位置和姿态都停止更新。
 
 ```zsh
 ./run_teleop.zsh \
+  rotation_scale:=0.3 \
   rotation_gain:=0.3 \
-  rotation_max_step_rad:=0.002
+  rotation_max_step_rad:=0.001
 ```
 
 如果只需要原来的 XYZ 位置控制，可显式关闭姿态：
@@ -369,7 +370,7 @@ ros2 launch robot_bringup RC_robot_bringup.launch.py \
 | Grip | `buttons[8..9]` | 数字量状态 |
 | Trigger | `buttons[10..11]` | 数字量状态 |
 
-左右臂的 Grip 判定阈值为 `0.5`。夹爪默认使用模拟量 Trigger；如改用数字前端按钮，
+左右臂 Grip 使用 `0.6` 按下、`0.4` 松开的回差。夹爪默认使用模拟量 Trigger；如改用数字前端按钮，
 可启动时加 `gripper_use_button:=true`。
 
 ## 6D 旋转控制
@@ -384,31 +385,52 @@ Quest 手柄四元数
   -> JAKA servo_p(INCR) 的 rx/ry/rz
 ```
 
-手柄每帧姿态已在 `xrt_teleop` 中转成机器人基坐标系。JAKA 驱动在每个控制周期只发送
-尚未完成的旋转增量，因此快速转动手柄时，机械臂会按安全角速度追赶，不会在没有达到
-目标姿态时提前丢弃剩余旋转。
+手柄每帧姿态已在 `xrt_teleop` 中转成机器人基坐标系。默认只映射一半的手柄相对旋转，
+并在每个控制周期以较小的角速度跟随。JAKA 驱动会保留尚未完成的旋转，避免快速转动
+时直接丢失目标。
 
 | 参数 | 默认值 | 说明 |
 | --- | --- | --- |
 | `use_rpy_ctrl` | `true` | `true` 为 6D；`false` 只控制 XYZ |
-| `rotation_gain` | `1.0` | 每个周期执行剩余旋转的比例，范围 0..1 |
+| `rotation_scale` | `0.5` | 手柄相对旋转映射到机械臂的比例，范围 0..1 |
+| `rotation_gain` | `0.5` | 每个周期执行剩余旋转的比例，范围 0..1 |
 | `rotation_deadband_rad` | `0.005` | 姿态死区，约 0.29° |
-| `rotation_max_step_rad` | `0.005` | 每 8 ms 最大旋转，约 35.8°/s |
+| `rotation_max_step_rad` | `0.0015` | 每 8 ms 最大旋转，约 10.7°/s |
 | `rotation_sign` | `1` | 全部旋转轴的统一方向；方向整体相反时设为 `-1` |
+| `grip_press_threshold` | `0.6` | Grip 达到该值才进入控制 |
+| `grip_release_threshold` | `0.4` | Grip 低于该值才释放控制 |
 
 旋转使用机器人基坐标系的增量 RPY。若手柄绕某个轴转动时机械臂三个旋转轴都朝相反
 方向运动，可先用 `rotation_sign:=-1` 验证；若只有某两个轴交换或部分方向异常，应
 修改 `xrt_bridge.yaml` 的 `headset_to_robot` / `tf_rotation`，不要把 `rotation_sign`
 当作单轴反号参数。
 
+本实现参考了 `vr-teleop-kit` 的 clutch-relative 映射、旋转比例缩放和松开后保持
+最后目标的思想。当前 JAKA 版本仍使用控制器自身的 `servo_p` 完成笛卡尔到关节的 IK；
+`vr-teleop-kit` 的 MuJoCo 解耦 IK 与 DK1 几何直接绑定，不能仅替换 IP 后用于 S5。
+
 现场首测步骤：
 
 1. 机械臂空载，爪内无工件，周围留出完整旋转空间。
-2. 先只测试左臂，使用 `rotation_gain:=0.3` 和
-   `rotation_max_step_rad:=0.002`。
+2. 先只测试左臂，使用 `rotation_scale:=0.3`、`rotation_gain:=0.3` 和
+   `rotation_max_step_rad:=0.001`。
 3. 按住 Grip，分别做小角度 roll、pitch、yaw，确认方向和轴对应关系。
 4. 松开 Grip 后确认位置和姿态都停止。
-5. 确认无误后再测试右臂，最后恢复 `rotation_gain:=1.0`。
+5. 确认无误后再测试右臂，再逐步提高旋转比例和速度。
+
+## 松开 Grip 后的保持
+
+JAKA `servo_p` 是直接面向伺服的连续控制接口，只发送一次零增量不能保证队列耗尽后
+完全静止。当前驱动在松开 Grip 后继续以 125 Hz 发送全零增量，等价于持续保持最后一
+个稳定目标；按下 Grip 后立即停止保持流并开始新的相对运动。
+
+Grip 使用 `0.6` 按下、`0.4` 松开的回差，避免模拟量在 `0.5` 附近波动时反复触发
+离合器。若现场 Grip 数值范围不同，可同时调整：
+
+```zsh
+grip_press_threshold:=0.6
+grip_release_threshold:=0.4
+```
 
 ## 坐标与标定
 
@@ -448,7 +470,7 @@ Trigger 保持最后一次有效值，避免跟踪中断时夹爪突然动作。
 - 先分别测试左臂和右臂，使用低速度、低夹爪力度，再双人复核后同时操作。
 - Grip 是离合器：按住时才跟踪，松开后立即停止增量伺服。
 - 默认启用 6D 姿态控制；首次调试旋转时必须空载并限制
-  `rotation_gain` / `rotation_max_step_rad`。
+  `rotation_scale` / `rotation_gain` / `rotation_max_step_rad`。
 - `gripper_initialize:=true` 会让夹爪执行初始化动作；维修或首次接线时先确认安全。
 - 修改 `rotation_sign`、坐标映射或夹爪方向后，先脱离负载测试。
 - AMR 底盘的 X/Y 急停逻辑沿用原 `sr_amr_control` 包，上线前必须按现场安全流程验证。

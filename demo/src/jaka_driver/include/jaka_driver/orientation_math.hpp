@@ -113,6 +113,11 @@ inline Quaternion quat_scaled_to_angle(const Quaternion & input, double step_ang
   return result;
 }
 
+inline bool grip_state(bool was_pressed, double value, double press, double release)
+{
+  return was_pressed ? value > release : value > press;
+}
+
 }  // namespace jaka_teleop
 
 #endif  // JAKA_DRIVER_ORIENTATION_MATH_HPP_
