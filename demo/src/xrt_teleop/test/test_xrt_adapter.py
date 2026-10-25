@@ -34,6 +34,16 @@ class XrtAdapterTest(unittest.TestCase):
         quaternion = quaternion_from_matrix(matrix_3x3(DEFAULT_HEADSET_TO_ROBOT))
         self.assertAlmostEqual(math.sqrt(sum(value * value for value in quaternion)), 1.0)
 
+    def test_default_mapping_rotates_controller_axes(self):
+        half_sqrt_two = math.sqrt(0.5)
+        _, quaternion = transform_pose(
+            (0.0, 0.0, 0.0, 0.0, half_sqrt_two, 0.0, half_sqrt_two)
+        )
+        self.assertAlmostEqual(quaternion[0], half_sqrt_two)
+        self.assertAlmostEqual(quaternion[1], 0.0)
+        self.assertAlmostEqual(quaternion[2], 0.0)
+        self.assertAlmostEqual(quaternion[3], half_sqrt_two)
+
     def test_zero_pose_is_untracked(self):
         self.assertFalse(raw_pose_is_valid((0.0,) * 7))
         self.assertTrue(

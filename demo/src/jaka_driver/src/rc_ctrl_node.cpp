@@ -1,3 +1,4 @@
+#include <algorithm>
 #include <iostream>
 #include <string>
 #include <map>
@@ -15,6 +16,7 @@
 #include "jaka_driver/JAKAZuRobot.h"
 #include "jaka_driver/jkerr.h"
 #include "jaka_driver/jktypes.h"
+#include "jaka_driver/orientation_math.hpp"
 #include "jaka_driver/pgi140_gripper.hpp"
 
 using namespace std;
@@ -69,6 +71,7 @@ std::thread rearm_thread;
 bool debug = false;
 CtrlPose ctrl_origin;   // controller pose at grip press (origin)
 CtrlPose ctrl_prev;     // last controller pose we commanded
+Quaternion commanded_rotation_delta = jaka_teleop::quat_identity();
 // Latest target pose (stored by value under a mutex: it is written by the target
 // callback every cycle and read by the re-arm thread at grip press).
 geometry_msgs::msg::PoseStamped latest_pose;
@@ -85,39 +88,20 @@ bool gripper_linear = true; // true = linear (analog axes), false = digital (but
 double gripper_trigger_deadband = 0.02; // minimal change to send new Grip()
 double prev_gripper_trigger = 0.0;
 std::unique_ptr<pgi140::Pgi140Gripper> gripper;
-bool use_rpy_ctrl = false;  // false = position-only teleop, true = position + attitude
+bool use_rpy_ctrl = true;   // true = 6D teleop, false = position-only fallback
+double rotation_gain = 1.0; // fraction of remaining controller rotation per cycle
+double rotation_deadband = 0.005;  // rad
+double rotation_max_step = 0.005;  // rad per 8 ms servo cycle (~35.8 deg/s)
+int rotation_sign = 1;             // 1 or -1 for all robot rotation axes
 bool enable_y_limit = true; // true = clamp arm TCP y to its workspace range
 bool arm_is_right = false;  // mirror of arm_name == "right"
 double arm_tcp_y_at_grip = 0.0; // arm's absolute TCP y captured at grip press (mm)
 bool arm_tcp_valid = false;     // whether the grip-time TCP read succeeded
 
-// Quaternion is (s, x, y, z) with s the scalar, matching ROS (w, x, y, z).
-Quaternion quat_conjugate(const Quaternion &q)
-{
-    // Inverse of a unit quaternion == conjugate (negate the vector part).
-    Quaternion r;
-    r.s = q.s;
-    r.x = -q.x;
-    r.y = -q.y;
-    r.z = -q.z;
-    return r;
-}
-
-// Hamilton product a * b  ("apply b, then a").
-Quaternion quat_mul(const Quaternion &a, const Quaternion &b)
-{
-    Quaternion r;
-    r.s = a.s * b.s - a.x * b.x - a.y * b.y - a.z * b.z;
-    r.x = a.s * b.x + a.x * b.s + a.y * b.z - a.z * b.y;
-    r.y = a.s * b.y - a.x * b.z + a.y * b.s + a.z * b.x;
-    r.z = a.s * b.z + a.x * b.y - a.y * b.x + a.z * b.s;
-    return r;
-}
-
 // Convert a PoseStamped (position in meters + quaternion) into a controller pose
 // (translation in mm + quaternion). No RPY conversion here — the RPY delta is
 // computed from quaternions in servo_cartesian().
-void pose_to_ctrl(const geometry_msgs::msg::PoseStamped &msg,
+bool pose_to_ctrl(const geometry_msgs::msg::PoseStamped &msg,
                   CtrlPose &pose)
 {
     // ROS uses meters, the JAKA SDK uses millimeters.
@@ -129,15 +113,18 @@ void pose_to_ctrl(const geometry_msgs::msg::PoseStamped &msg,
     pose.quat.x = msg.pose.orientation.x;
     pose.quat.y = msg.pose.orientation.y;
     pose.quat.z = msg.pose.orientation.z;
+    Quaternion normalized;
+    if (!jaka_teleop::quat_normalize(pose.quat, &normalized)) {
+        return false;
+    }
+    pose.quat = normalized;
+    return true;
 }
 
 // Per-cycle Cartesian servo limits. servo_p is fed one increment per 8 ms
-// interpolation cycle, so SERVO_MAX_TRAN_STEP / 0.008 ~= 125 mm/s and
-// SERVO_MAX_ROT_STEP / 0.008 ~= 36 deg/s.
+// interpolation cycle.
 constexpr double SERVO_TRAN_DEADBAND = 0.5;   // mm: ignore smaller translation deltas
-constexpr double SERVO_ROT_DEADBAND = 0.005;  // rad (~0.29 deg): ignore smaller rotation deltas
 constexpr double SERVO_MAX_TRAN_STEP = 5.0;   // mm per cycle (~125 mm/s)
-constexpr double SERVO_MAX_ROT_STEP = 0.05;  // rad per cycle (~36 deg/s)
 constexpr double Y_LIMIT_MM = 110.0;         // workspace y boundary: left > -110, right < +110
 
 // Drive one arm to track the controller's displacement since grip press, in
@@ -148,9 +135,10 @@ constexpr double Y_LIMIT_MM = 110.0;         // workspace y boundary: left > -11
 // when the controller returns to its origin, and holds when we stop sending.
 // No IK and no read-back, so nothing can diverge/oscillate.
 //
-// The incremental ROTATION is computed from quaternions (q_now * q_prev^-1) and
-// only then converted to RPY: subtracting two absolute RPYs does not yield the
-// incremental rotation (RPY is non-linear and gimbal-lock singular).
+// Rotation is relative to the controller orientation captured at Grip press.
+// The bridge has already converted the controller quaternion to the robot base
+// frame. We maintain the cumulative rotation actually sent to the robot, so a
+// per-cycle speed clamp does not silently discard part of a fast hand rotation.
 void servo_cartesian(JAKAZuRobot &robot,
                      const geometry_msgs::msg::PoseStamped::SharedPtr msg,
                      const CtrlPose &ctrl_origin,
@@ -158,7 +146,15 @@ void servo_cartesian(JAKAZuRobot &robot,
                      const char *arm_name)
 {
     CtrlPose ctrl_now;
-    pose_to_ctrl(*msg, ctrl_now);
+    if (!pose_to_ctrl(*msg, ctrl_now))
+    {
+        if (debug)
+        {
+            RCLCPP_WARN(rclcpp::get_logger("rc_ctrl"),
+                        "[%s] ignoring target with invalid orientation quaternion", arm_name);
+        }
+        return;
+    }
 
     // Workspace y-limit: an absolute one-way barrier on the arm's TCP y so the
     // two arms never cross the shared center line. The commanded absolute
@@ -181,49 +177,88 @@ void servo_cartesian(JAKAZuRobot &robot,
     incr.tran.y = ctrl_now.tran.y - ctrl_prev.tran.y;
     incr.tran.z = ctrl_now.tran.z - ctrl_prev.tran.z;
 
-    // Attitude control is optional: when use_rpy_ctrl is false the handle only
-    // drives translation and the arm holds its current orientation (rpy == 0).
-    double max_rot = 0.0;
+    // Attitude control: controller rotation relative to the Grip-press origin.
+    Quaternion rotation_step = jaka_teleop::quat_identity();
+    Quaternion rotation_step_actual = jaka_teleop::quat_identity();
+    bool has_rotation_step = false;
     incr.rpy.rx = 0.0;
     incr.rpy.ry = 0.0;
     incr.rpy.rz = 0.0;
     if (use_rpy_ctrl)
     {
-        // Per-cycle orientation increment: q_incr = q_now * q_prev^-1, a
-        // near-identity rotation that converts back to RPY without singularities.
-        Quaternion q_incr = quat_mul(ctrl_now.quat, quat_conjugate(ctrl_prev.quat));
+        // Desired world-frame rotation since Grip press.
+        Quaternion desired_rotation = jaka_teleop::quat_multiply(
+            ctrl_now.quat, jaka_teleop::quat_conjugate(ctrl_origin.quat));
+        desired_rotation = jaka_teleop::quat_normalized(desired_rotation);
+
+        // Rotation which has not yet reached the robot.
+        Quaternion remaining_rotation = jaka_teleop::quat_multiply(
+            desired_rotation,
+            jaka_teleop::quat_conjugate(commanded_rotation_delta));
+        remaining_rotation = jaka_teleop::quat_normalized(remaining_rotation);
+        remaining_rotation = jaka_teleop::quat_canonical(remaining_rotation);
+        const double remaining_angle =
+            jaka_teleop::quat_rotation_angle(remaining_rotation);
+
+        if (remaining_angle >= rotation_deadband && rotation_gain > 0.0)
+        {
+            const double requested_step = remaining_angle * rotation_gain;
+            const double applied_step = std::min(requested_step, rotation_max_step);
+            rotation_step = jaka_teleop::quat_scaled_to_angle(
+                remaining_rotation, applied_step);
+            has_rotation_step = applied_step > 1e-6;
+        }
+    }
+
+    if (has_rotation_step)
+    {
         RotMatrix rot_incr;
-        if (robot.quaternion_to_rot_matrix(&q_incr, &rot_incr) != 0)
+        if (robot.quaternion_to_rot_matrix(&rotation_step, &rot_incr) != 0)
         {
             RCLCPP_WARN(rclcpp::get_logger("rc_ctrl"),
                         "[%s] failed to convert quaternion to rot matrix", arm_name);
-            return;
+            incr.rpy.rx = 0.0;
+            incr.rpy.ry = 0.0;
+            incr.rpy.rz = 0.0;
+            has_rotation_step = false;
         }
-        if (robot.rot_matrix_to_rpy(&rot_incr, &incr.rpy) != 0)
+        else if (robot.rot_matrix_to_rpy(&rot_incr, &incr.rpy) != 0)
         {
             RCLCPP_WARN(rclcpp::get_logger("rc_ctrl"),
                         "[%s] failed to convert rot matrix to RPY", arm_name);
-            return;
+            incr.rpy.rx = 0.0;
+            incr.rpy.ry = 0.0;
+            incr.rpy.rz = 0.0;
+            has_rotation_step = false;
         }
-
-        max_rot = std::max(std::fabs(incr.rpy.rx),
-                 std::max(std::fabs(incr.rpy.ry), std::fabs(incr.rpy.rz)));
-        if (max_rot > SERVO_MAX_ROT_STEP)
+        else
         {
-            double s = SERVO_MAX_ROT_STEP / max_rot;
-            incr.rpy.rx *= s;
-            incr.rpy.ry *= s;
-            incr.rpy.rz *= s;
+            incr.rpy.rx *= rotation_sign;
+            incr.rpy.ry *= rotation_sign;
+            incr.rpy.rz *= rotation_sign;
+            // Reconstruct the rotation represented by the exact signed RPY sent
+            // to the controller. This keeps the accumulated reference correct
+            // if the sign parameter is used or the Euler conversion changes axes.
+            RotMatrix actual_rot;
+            Quaternion actual_quat;
+            if (robot.rpy_to_rot_matrix(&incr.rpy, &actual_rot) != 0 ||
+                robot.rot_matrix_to_quaternion(&actual_rot, &actual_quat) != 0 ||
+                !jaka_teleop::quat_normalize(actual_quat, &rotation_step_actual))
+            {
+                RCLCPP_WARN(rclcpp::get_logger("rc_ctrl"),
+                            "[%s] failed to verify orientation increment", arm_name);
+                incr.rpy.rx = 0.0;
+                incr.rpy.ry = 0.0;
+                incr.rpy.rz = 0.0;
+                has_rotation_step = false;
+            }
         }
-        incr.rpy.rx = -incr.rpy.rx;
-        incr.rpy.ry = -incr.rpy.ry;
-        incr.rpy.rz = -incr.rpy.rz;
     }
 
     // Deadband: hold in place instead of chasing sub-mm / sub-degree handle noise.
     double max_tran = std::max(std::fabs(incr.tran.x),
                       std::max(std::fabs(incr.tran.y), std::fabs(incr.tran.z)));
-    if (max_tran < SERVO_TRAN_DEADBAND && (!use_rpy_ctrl || max_rot < SERVO_ROT_DEADBAND))
+    if (max_tran < SERVO_TRAN_DEADBAND && !has_rotation_step)
         return;
 
     // Velocity clamp: scale translation to its per-cycle cap, preserving
@@ -248,6 +283,15 @@ void servo_cartesian(JAKAZuRobot &robot,
     // Track what we actually commanded so the next cycle's delta is measured
     // from the same reference the robot is using.
     ctrl_prev = ctrl_now;
+    if (has_rotation_step)
+    {
+        commanded_rotation_delta = jaka_teleop::quat_multiply(
+            rotation_step_actual, commanded_rotation_delta);
+        commanded_rotation_delta =
+            jaka_teleop::quat_normalized(commanded_rotation_delta);
+        commanded_rotation_delta =
+            jaka_teleop::quat_canonical(commanded_rotation_delta);
+    }
 
     // DEBUG: throttled print of the total translation offset and the per-cycle
     // incremental rotation (the quaternion-derived RPY delta).
@@ -387,7 +431,14 @@ void rearm_worker()
         CtrlPose origin;
         {
             std::lock_guard<std::mutex> lk(latest_mtx);
-            pose_to_ctrl(latest_pose, origin);
+            if (!pose_to_ctrl(latest_pose, origin))
+            {
+                RCLCPP_WARN(rclcpp::get_logger("rc_ctrl"),
+                            "[%s] cannot start tracking without a valid controller orientation",
+                            arm_name.c_str());
+                rearming = false;
+                return;
+            }
         }
         // Capture the arm's absolute TCP y once at grip press so the workspace
         // y-limit is enforced against the actual position (grip TCP + handle
@@ -400,11 +451,13 @@ void rearm_worker()
         // makes these writes visible to target_callback.
         ctrl_origin = origin;
         ctrl_prev = origin;
+        commanded_rotation_delta = jaka_teleop::quat_identity();
         gripped = true;
         RCLCPP_INFO(rclcpp::get_logger("rc_ctrl"),
-                    "[%s] gripped, ctrl_origin=(%.1f,%.1f,%.1f)mm",
+                    "[%s] gripped, ctrl_origin=(%.1f,%.1f,%.1f)mm, 6D=%s",
                     arm_name.c_str(),
-                    ctrl_origin.tran.x, ctrl_origin.tran.y, ctrl_origin.tran.z);
+                    ctrl_origin.tran.x, ctrl_origin.tran.y, ctrl_origin.tran.z,
+                    use_rpy_ctrl ? "true" : "false");
     }
     rearming = false;
 }
@@ -685,8 +738,31 @@ int main(int argc, char *argv[])
 
     
    debug = node->declare_parameter<bool>("debug", false);
-   use_rpy_ctrl = node->declare_parameter<bool>("use_rpy_ctrl", false);
+   use_rpy_ctrl = node->declare_parameter<bool>("use_rpy_ctrl", true);
+   rotation_gain = node->declare_parameter<double>("rotation_gain", 1.0);
+   rotation_deadband = node->declare_parameter<double>(
+       "rotation_deadband_rad", 0.005);
+   rotation_max_step = node->declare_parameter<double>(
+       "rotation_max_step_rad", 0.005);
+   rotation_sign = node->declare_parameter<int>("rotation_sign", 1);
    enable_y_limit = node->declare_parameter<bool>("enable_y_limit", true);
+
+   rotation_gain = std::max(0.0, std::min(1.0, rotation_gain));
+   rotation_deadband = std::max(0.0, rotation_deadband);
+   if (rotation_max_step <= 0.0)
+   {
+       RCLCPP_WARN(rclcpp::get_logger("rc_ctrl"),
+                   "[%s] rotation_max_step_rad must be positive; using 0.005",
+                   arm_name.c_str());
+       rotation_max_step = 0.005;
+   }
+   if (rotation_sign != 1 && rotation_sign != -1)
+   {
+       RCLCPP_WARN(rclcpp::get_logger("rc_ctrl"),
+                   "[%s] rotation_sign must be 1 or -1; using 1",
+                   arm_name.c_str());
+       rotation_sign = 1;
+   }
 
 
     gripper = std::make_unique<pgi140::Pgi140Gripper>(robot, gripper_config);
@@ -707,6 +783,11 @@ int main(int argc, char *argv[])
     RCLCPP_INFO(rclcpp::get_logger("rc_ctrl"),
                 "rc_ctrl_node started: arm=%s, ip=%s, tracking %s (grip axis %d)",
                 arm_name.c_str(), ip.c_str(), target_topic.c_str(), grip_axis);
+    RCLCPP_INFO(rclcpp::get_logger("rc_ctrl"),
+                "[%s] orientation control: enabled=%s gain=%.2f deadband=%.4f rad "
+                "max_step=%.4f rad sign=%d",
+                arm_name.c_str(), use_rpy_ctrl ? "true" : "false",
+                rotation_gain, rotation_deadband, rotation_max_step, rotation_sign);
 
     rclcpp::spin(node);
 

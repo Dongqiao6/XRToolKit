@@ -89,8 +89,20 @@ def generate_launch_description():
         'gripper_button_index', default_value='-1',
         description='Joy.buttons index; -1 selects left LTr=10 or right RTr=11')
     use_rpy_ctrl_arg = DeclareLaunchArgument(
-        'use_rpy_ctrl', default_value='false',
-        description='true = teleop controls orientation too; false = position only')
+        'use_rpy_ctrl', default_value='true',
+        description='true = 6D teleop including orientation; false = position only')
+    rotation_gain_arg = DeclareLaunchArgument(
+        'rotation_gain', default_value='1.0',
+        description='Fraction of remaining controller rotation applied per cycle (0..1)')
+    rotation_deadband_arg = DeclareLaunchArgument(
+        'rotation_deadband_rad', default_value='0.005',
+        description='Ignore controller orientation changes below this angle in radians')
+    rotation_max_step_arg = DeclareLaunchArgument(
+        'rotation_max_step_rad', default_value='0.005',
+        description='Maximum commanded rotation per 8 ms servo cycle in radians')
+    rotation_sign_arg = DeclareLaunchArgument(
+        'rotation_sign', default_value='1',
+        description='Robot rotation direction: 1 or -1, applied to all rotation axes')
     enable_y_limit_arg = DeclareLaunchArgument(
         'enable_y_limit', default_value='true',
         description='true = clamp arm TCP y (left > -110 mm, right < 110 mm)')
@@ -130,6 +142,10 @@ def generate_launch_description():
             'gripper_use_button': ParameterValue(LaunchConfiguration('gripper_use_button'), value_type=bool),
             'gripper_button_index': ParameterValue(LaunchConfiguration('gripper_button_index'), value_type=int),
             'use_rpy_ctrl': ParameterValue(LaunchConfiguration('use_rpy_ctrl'), value_type=bool),
+            'rotation_gain': ParameterValue(LaunchConfiguration('rotation_gain'), value_type=float),
+            'rotation_deadband_rad': ParameterValue(LaunchConfiguration('rotation_deadband_rad'), value_type=float),
+            'rotation_max_step_rad': ParameterValue(LaunchConfiguration('rotation_max_step_rad'), value_type=float),
+            'rotation_sign': ParameterValue(LaunchConfiguration('rotation_sign'), value_type=int),
             'enable_y_limit': ParameterValue(LaunchConfiguration('enable_y_limit'), value_type=bool),
         }]
     )
@@ -164,6 +180,10 @@ def generate_launch_description():
             'gripper_use_button': ParameterValue(LaunchConfiguration('gripper_use_button'), value_type=bool),
             'gripper_button_index': ParameterValue(LaunchConfiguration('gripper_button_index'), value_type=int),
             'use_rpy_ctrl': ParameterValue(LaunchConfiguration('use_rpy_ctrl'), value_type=bool),
+            'rotation_gain': ParameterValue(LaunchConfiguration('rotation_gain'), value_type=float),
+            'rotation_deadband_rad': ParameterValue(LaunchConfiguration('rotation_deadband_rad'), value_type=float),
+            'rotation_max_step_rad': ParameterValue(LaunchConfiguration('rotation_max_step_rad'), value_type=float),
+            'rotation_sign': ParameterValue(LaunchConfiguration('rotation_sign'), value_type=int),
             'enable_y_limit': ParameterValue(LaunchConfiguration('enable_y_limit'), value_type=bool),
         }]
     )
@@ -193,6 +213,10 @@ def generate_launch_description():
         gripper_use_button_arg,
         gripper_button_index_arg,
         use_rpy_ctrl_arg,
+        rotation_gain_arg,
+        rotation_deadband_arg,
+        rotation_max_step_arg,
+        rotation_sign_arg,
         enable_y_limit_arg,
         rc_ctrl_left_node,
         rc_ctrl_right_node,

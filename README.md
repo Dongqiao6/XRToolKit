@@ -3,7 +3,8 @@
 本工程是 `RemoteCtrl-master` 的 XRoboToolKit 迁移版。Quest 3 不再通过旧 APK 的
 adb/logcat 文本传输位姿，而是运行 `XRoboToolkit-Quest-1.0.1.apk`，由
 `XRoboToolkit-PC-Service` 接收头显数据；`xrt_teleop` 再把数据转换成本工程原有的
-ROS 2 控制话题。JAKA 双臂驱动、PGI 夹爪控制、AMR 底盘接口及设备地址保持原样。
+ROS 2 控制话题。JAKA 双臂现在支持位置 XYZ + 姿态 RPY 的 6 维遥操作，PGI 夹爪、
+AMR 底盘接口及设备地址保持原样。
 
 Quest 3 的 MAC 地址为 `50:99:03:0a:38:78`。XRoboToolkit 使用 PC-service 自动
 发现设备，日常遥操作不需要配置 MAC；该地址用于设备识别、库存记录和网络排查。
@@ -60,8 +61,9 @@ cd "$HOME/Documents/dj_main/XRToolKit/demo"
 `run_teleop.zsh` 会依次启动 Quest APK、加载 ROS/zsh 环境，再执行
 `ros2 launch jaka_driver dual_arm_teleop.launch.py`。
 
-按住左手柄 Grip 控制左臂，按住右手柄 Grip 控制右臂，松开即停止。左手 Trigger
-控制左夹爪，右手 Trigger 控制右夹爪。首次测试应空载、低速，并先分别测试左右臂。
+按住左手柄 Grip 控制左臂，按住右手柄 Grip 控制右臂，松开即停止。按住 Grip 后，
+手柄的平移和旋转会同时映射到机械臂末端；左手 Trigger 控制左夹爪，右手 Trigger
+控制右夹爪。首次测试应空载、低速，并先分别测试左右臂。
 
 如果需要同时启动 AMR 底盘：
 
@@ -314,8 +316,23 @@ ros2 launch jaka_driver dual_arm_teleop.launch.py \
   gripper_configure_tio:=false
 ```
 
-默认 `use_rpy_ctrl:=false`，与旧工程一致，只让手柄平移量控制机械臂位置，机械臂保持
-当前姿态。确认位置控制稳定后，可显式加入 `use_rpy_ctrl:=true` 同步手柄姿态。
+默认 `use_rpy_ctrl:=true`，即同时控制位置和姿态。姿态采用相对控制：按下 Grip 的
+瞬间同时记录手柄位置与姿态作为零点，之后手臂跟随手柄的相对平移和相对旋转；松开
+Grip 后位置和姿态都停止更新。
+
+第一次验证旋转时，建议先使用较低旋转增益和角速度：
+
+```zsh
+./run_teleop.zsh \
+  rotation_gain:=0.3 \
+  rotation_max_step_rad:=0.002
+```
+
+如果只需要原来的 XYZ 位置控制，可显式关闭姿态：
+
+```zsh
+./run_teleop.zsh use_rpy_ctrl:=false
+```
 
 如果不希望启动时初始化夹爪产生动作：
 
@@ -355,6 +372,44 @@ ros2 launch robot_bringup RC_robot_bringup.launch.py \
 左右臂的 Grip 判定阈值为 `0.5`。夹爪默认使用模拟量 Trigger；如改用数字前端按钮，
 可启动时加 `gripper_use_button:=true`。
 
+## 6D 旋转控制
+
+旋转桥接链路如下：
+
+```text
+Quest 手柄四元数
+  -> headset_to_robot 坐标变换
+  -> 与 Grip 按下时的姿态求相对旋转
+  -> 取最短旋转并限制每周期角度
+  -> JAKA servo_p(INCR) 的 rx/ry/rz
+```
+
+手柄每帧姿态已在 `xrt_teleop` 中转成机器人基坐标系。JAKA 驱动在每个控制周期只发送
+尚未完成的旋转增量，因此快速转动手柄时，机械臂会按安全角速度追赶，不会在没有达到
+目标姿态时提前丢弃剩余旋转。
+
+| 参数 | 默认值 | 说明 |
+| --- | --- | --- |
+| `use_rpy_ctrl` | `true` | `true` 为 6D；`false` 只控制 XYZ |
+| `rotation_gain` | `1.0` | 每个周期执行剩余旋转的比例，范围 0..1 |
+| `rotation_deadband_rad` | `0.005` | 姿态死区，约 0.29° |
+| `rotation_max_step_rad` | `0.005` | 每 8 ms 最大旋转，约 35.8°/s |
+| `rotation_sign` | `1` | 全部旋转轴的统一方向；方向整体相反时设为 `-1` |
+
+旋转使用机器人基坐标系的增量 RPY。若手柄绕某个轴转动时机械臂三个旋转轴都朝相反
+方向运动，可先用 `rotation_sign:=-1` 验证；若只有某两个轴交换或部分方向异常，应
+修改 `xrt_bridge.yaml` 的 `headset_to_robot` / `tf_rotation`，不要把 `rotation_sign`
+当作单轴反号参数。
+
+现场首测步骤：
+
+1. 机械臂空载，爪内无工件，周围留出完整旋转空间。
+2. 先只测试左臂，使用 `rotation_gain:=0.3` 和
+   `rotation_max_step_rad:=0.002`。
+3. 按住 Grip，分别做小角度 roll、pitch、yaw，确认方向和轴对应关系。
+4. 松开 Grip 后确认位置和姿态都停止。
+5. 确认无误后再测试右臂，最后恢复 `rotation_gain:=1.0`。
+
 ## 坐标与标定
 
 默认使用旧 Quest reader 和 XRoboToolkit 官方 teleop 示例相同的映射：
@@ -370,6 +425,7 @@ ros2 launch robot_bringup RC_robot_bringup.launch.py \
 - `tf_rotation`：Quest 到机器人基坐标系的旋转，顺序为 `[w, x, y, z]`。
 - `pose_scale`：平移缩放，默认 `1.0`。
 - `smooth_alpha`：0 表示不平滑，越大越跟手。
+- 姿态方向由同一坐标矩阵变换；旋转增量随后由 JAKA 驱动发送。
 
 先保持默认值测试。只有在方向或零点不符合现场安装关系时才修改标定参数。
 
@@ -391,8 +447,10 @@ Trigger 保持最后一次有效值，避免跟踪中断时夹爪突然动作。
 - 首次运行前清空双臂运动范围，确认急停可用，人员不要进入机械臂工作空间。
 - 先分别测试左臂和右臂，使用低速度、低夹爪力度，再双人复核后同时操作。
 - Grip 是离合器：按住时才跟踪，松开后立即停止增量伺服。
+- 默认启用 6D 姿态控制；首次调试旋转时必须空载并限制
+  `rotation_gain` / `rotation_max_step_rad`。
 - `gripper_initialize:=true` 会让夹爪执行初始化动作；维修或首次接线时先确认安全。
-- 修改 `use_rpy_ctrl`、坐标映射或夹爪方向后，先脱离负载测试。
+- 修改 `rotation_sign`、坐标映射或夹爪方向后，先脱离负载测试。
 - AMR 底盘的 X/Y 急停逻辑沿用原 `sr_amr_control` 包，上线前必须按现场安全流程验证。
 
 ## 常见问题

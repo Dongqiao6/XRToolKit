@@ -115,6 +115,10 @@ if(BUILD_TESTING)
   )
   target_include_directories(pgi140_protocol_test PRIVATE include)
   add_test(NAME pgi140_protocol_test COMMAND pgi140_protocol_test)
+
+  add_executable(orientation_math_test test/orientation_math_test.cpp)
+  target_include_directories(orientation_math_test PRIVATE include)
+  add_test(NAME orientation_math_test COMMAND orientation_math_test)
 endif()
 
 ament_package()
