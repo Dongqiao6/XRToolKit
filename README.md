@@ -485,6 +485,35 @@ D405 是单目 RGB 相机，而当前 APK 的平面 Remote Vision 使用左右�
 会把同一幅 D405 图像复制成左右完全相同的 `2560x720` 侧并排画面，双眼中看到的图像
 一致，不会把单幅图像错误地拆给左右眼。它不提供真实立体深度。
 
+### D405 最短运行流程
+
+首次安装依赖并注入视频源：
+
+```zsh
+cd "$HOME/Documents/dj_main/XRToolKit/demo"
+./install_vision_deps.zsh
+v4l2-ctl --list-devices
+./launch_quest.zsh
+./setup_d405_profile.zsh
+```
+
+确认下方命令输出的设备、分辨率、帧率和格式可用：
+
+```zsh
+v4l2-ctl --list-formats-ext -d /dev/video0
+./run_d405_vision.zsh --check --device /dev/video0
+```
+
+保持 PC-service 和遥操作运行，在另一个终端启动视频：
+
+```zsh
+cd "$HOME/Documents/dj_main/XRToolKit/demo"
+./run_d405_vision.zsh --device /dev/video0
+```
+
+最后在 Quest 中打开 Remote Vision，选择 `REALSENSE_D405`，点击 `Listen`，输入 JAKA
+主机 IP 并点击 `Confirm`。
+
 ### 1. 安装视频依赖
 
 ```zsh
