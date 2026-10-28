@@ -9,42 +9,58 @@ AMR 底盘接口及设备地址保持原样。
 Quest 3 的 MAC 地址为 `50:99:03:0a:38:78`。XRoboToolkit 使用 PC-service 自动
 发现设备，日常遥操作不需要配置 MAC；该地址用于设备识别、库存记录和网络排查。
 
-## 修改后最短运行流程
+## 标准运行顺序：先 JAKA 双臂，后 D405
 
-首次使用先安装 XRoboToolkit Python SDK，再编译工程。以下命令在 zsh 中执行：
+现场必须按下面的顺序启动。D405 和机械臂控制使用两个独立进程，但这里固定采用“先确认
+机械臂登录、上电、使能和手柄跟踪全部正常，再启动视频”的顺序，便于一次只排查一条链路。
+
+一句话顺序：`PC-service -> JAKA 双臂就绪 -> D405 发送端 -> Quest Remote Vision`。
+日常运行且配置未变化时跳过第 0 步和第 2 步，严格按第 1、3、4、5、6、7 步执行。
+
+### 0. 首次安装或代码更新后执行
+
+只有第一次部署、代码或依赖发生变化时需要执行：
 
 ```zsh
 cd "$HOME/Documents/dj_main/XRToolKit/demo"
 ./install_xrt_sdk.zsh
+./install_vision_deps.zsh
 ./clean.zsh
 ./build.zsh
 source "$HOME/Documents/dj_main/XRToolKit/demo/setup.zsh"
 ros2 pkg prefix jaka_driver
 ```
 
-最后一条命令必须输出 `jaka_driver` 的安装路径。如果没有输出，说明编译或工作区加载
-失败，不要继续启动机械臂。
+最后一条命令必须输出 `jaka_driver` 的安装路径。D405 的
+`video_source_d405.yml` 修改后，还必须重新执行一次
+`./setup_d405_profile.zsh`，否则 Quest 会继续读取旧配置。
 
-运行时使用三个终端：
+### 1. 终端 A：先启动 PC-service
 
-**终端 1：启动 XRoboToolkit PC-service**
+保持此终端运行：
 
 ```zsh
 cd /opt/apps/roboticsservice
 ./runService.sh
 ```
 
-**Quest 3：发送数据**
+在继续前确认 PC-service 已正常启动，不要关闭该终端。
 
-不需要每次手工执行 adb。下面的 `run_teleop.zsh` 会自动连接 adb、启动 Quest 上的
-XRoboToolkit APK，并加载 ROS 工作区。第一次建议用 USB 连接一次 Quest，让脚本建立
-无线 adb 并保存 IP；无线 adb 保持开启时可直接无线启动。Quest 重启后若无线调试失效，
-再用 USB 连接运行一次即可。也可以手动在头显中打开 `XRoboToolkit`。
+### 2. Quest：首次配置视频源
 
-在 APK 中输入 JAKA 主机的局域网 IP，开启控制器 Tracking 和 Send。这里不再运行旧的
-`quest_reader`，也不再需要旧 APK 的 adb logcat。
+这一步只在首次使用 D405，或者 `video_source_d405.yml` 修改后执行。必须在启动双臂
+控制前完成，因为该脚本会重启 APK。
 
-**终端 2：启动 JAKA 双臂和夹爪**
+```zsh
+cd "$HOME/Documents/dj_main/XRToolKit/demo"
+./launch_quest.zsh
+./setup_d405_profile.zsh
+```
+
+第一次建议用 USB 连接 Quest；脚本会建立无线 adb 并保存 IP。重新打开 APK 后确认
+Controller Tracking 已开启。此时先不要点 Remote Vision 的 Listen。
+
+### 3. 终端 B：启动 JAKA 双臂和夹爪
 
 ```zsh
 cd "$HOME/Documents/dj_main/XRToolKit/demo"
@@ -58,45 +74,103 @@ cd "$HOME/Documents/dj_main/XRToolKit/demo"
   gripper_configure_tio:=false
 ```
 
-`run_teleop.zsh` 会依次启动 Quest APK、加载 ROS/zsh 环境，再执行
-`ros2 launch jaka_driver dual_arm_teleop.launch.py`。
+`run_teleop.zsh` 会再次启动 APK、加载工程 ROS 环境，然后启动 `xrt_teleop_bridge`、
+左侧 `rc_ctrl`、右侧 `rc_ctrl` 和两个 PGI 夹爪。
 
-按住左手柄 Grip 控制左臂，按住右手柄 Grip 控制右臂，松开即停止。按住 Grip 后，
-手柄的平移和旋转会同时映射到机械臂末端；左手 Trigger 控制左夹爪，右手 Trigger
-控制右夹爪。首次测试应空载、低速，并先分别测试左右臂。
+### 4. 等待 JAKA 双臂完全就绪
 
-如果需要同时启动 AMR 底盘：
+观察终端 B，确认左右两侧都出现以下关键日志：
+
+```text
+[INFO] ... xrt_teleop_bridge: XRoboToolkit bridge started
+[INFO] ... xrt_teleop_bridge: left controller tracking acquired
+[INFO] ... xrt_teleop_bridge: right controller tracking acquired
+[INFO] ... [rc_ctrl]: left login OK (192.168.71.37)
+[INFO] ... [rc_ctrl]: right login OK (192.168.71.36)
+[INFO] ... [rc_ctrl]: left power_on OK
+[INFO] ... [rc_ctrl]: right power_on OK
+[INFO] ... [rc_ctrl]: left enable_robot OK
+[INFO] ... [rc_ctrl]: right enable_robot OK
+[INFO] ... [rc_ctrl]: left servo enabled (is_in_servomove=1)
+[INFO] ... [rc_ctrl]: right servo enabled (is_in_servomove=1)
+[INFO] ... [rc_ctrl]: rc_ctrl_node started
+```
+
+只有左右两臂都出现 `servo enabled` 后才继续启动 D405。如果任一臂出现
+`ERR_INVALID_HANDLER`、`ERR_NOT_ENABLED` 或无法进入伺服模式，先处理机械臂问题，不要
+继续测试视频。
+
+保持终端 B 运行。机械臂空载时按住一次右手柄 Grip，轻微移动后松开，确认右臂能跟随并
+停止；再按同样方法测试左臂。不要在运动范围未确认时测试。
+
+### 5. 终端 C：确认没有旧视频进程，再启动 D405
+
+先确认终端 C 当前目录正确：
 
 ```zsh
 cd "$HOME/Documents/dj_main/XRToolKit/demo"
-source "$HOME/Documents/dj_main/XRToolKit/demo/setup.zsh"
-
-ros2 launch robot_bringup RC_robot_bringup.launch.py \
-  robot_left_ip:=192.168.71.37 \
-  robot_right_ip:=192.168.71.36 \
-  connect_ip:=192.168.71.50 \
-  gripper_rs485_channel:=1 \
-  gripper_configure_tio:=false
 ```
 
-启动前必须给左、右 JAKA 控制器上电。左臂未上电时会出现
-`left login FAILED ... ERR_INVALID_HANDLER`；请上电后重新启动整套 launch。
+首次运行或摄像头节点变化时先检查：
 
-如果还需要把 D405 全局画面显示到 Quest 中，另开一个终端运行 D405 视频发送端，并在
-Remote Vision 中选择 `REALSENSE_D405`。`run_d405_vision.zsh` 只负责视频，不会启动
-JAKA 遥操作；`run_teleop.zsh` 必须同时在另一个终端运行。完整步骤见“D405 低时延
-远程视觉”章节。
+```zsh
+./run_d405_vision.zsh --list-devices
+./run_d405_vision.zsh --check
+```
 
-以后每次运行，如果工作区代码和编译选项没有变化，可直接执行
-`./run_teleop.zsh ...`。如果自动 adb 启动失败，可设置 Quest IP 后重试：
+两条命令都成功后，保持终端 B 的双臂节点运行，在终端 C 启动视频：
+
+```zsh
+./run_d405_vision.zsh
+```
+
+等待终端 C 打印下面两类信息：
+
+```text
+Selected /dev/videoN (...), capture=YUY2
+In Quest Remote Vision, enter JAKA host IP 192.168.1.x (...)
+Waiting for Quest Remote Vision on 0.0.0.0:13579
+```
+
+把 `In Quest Remote Vision, enter JAKA host IP` 中的 IPv4 地址记下来。它必须是运行
+D405 发送端的 JAKA 主机地址，不能是 JAKA 控制器 `192.168.71.36/37`，不能是底盘
+`192.168.71.50`，也不能是 Quest 自己的地址。
+
+### 6. Quest：最后打开 Remote Vision
+
+在确认第 4 步的双臂伺服和第 5 步的 D405 发送端都运行后：
+
+1. 戴上 Quest，保持 XRoboToolkit 的 Controller Tracking 和 Send 开启。
+2. 打开 Remote Vision。
+3. 视频源选择 `REALSENSE_D405`。
+4. 点击 Listen，输入终端 C 打印的 `In Quest Remote Vision, enter JAKA host IP`。
+5. 点击 Confirm。
+6. 确认终端 C 出现 `Remote Vision control connected`、`OPEN_CAMERA`、
+   `Streaming D405` 和持续增加的 `Video sent: frames=...`。
+
+此时双臂遥操作和 D405 画面应同时工作。左手柄 Grip 控制左臂，右手柄 Grip 控制右臂，
+松开 Grip 后停止；左手 Trigger 控制左夹爪，右手 Trigger 控制右夹爪。
+
+### 7. 关闭顺序
+
+按与启动相反的顺序关闭：
+
+1. Quest 中停止 Remote Vision 的 Listen。
+2. 终端 C 按 `Ctrl-C`，停止 D405。
+3. 终端 B 按 `Ctrl-C`，停止双臂和夹爪控制。
+4. 最后停止终端 A 的 PC-service。
+
+### 只重启其中一项时
+
+- 只重启视频：保留终端 A 和终端 B，停止并重新启动终端 C，然后在 Quest 重新 Listen。
+- 只重启双臂：停止终端 B 后重新执行第 3 步；不需要重启 PC-service，D405 可保持运行。
+- Quest 重启后没有无线 adb：用 USB 连接一次，再运行 `./launch_quest.zsh`。
+
+如果自动 adb 启动失败，可显式指定 Quest IP：
 
 ```zsh
 QUEST_IP=<Quest IP> ./run_teleop.zsh
 ```
-
-APK 已经打开时也可以先执行
-`source "$HOME/Documents/dj_main/XRToolKit/demo/setup.zsh"`，再运行对应的
-`ros2 launch` 命令。
 
 ## 目录
 
@@ -274,75 +348,9 @@ source "$HOME/Documents/dj_main/XRToolKit/demo/setup.zsh"
 JAKA SDK 是 ARM64 二进制，不能在普通 x86_64 电脑上链接出可在 JAKA 主机运行的节点。
 `install/setup.zsh` 是 `colcon build` 成功后生成的，不能在编译前 source。
 
-## 启动
+## 机械臂控制选项
 
-### 1. 启动 PC-service
-
-保持该终端运行：
-
-```zsh
-cd /opt/apps/roboticsservice
-./runService.sh
-```
-
-### 2. 在 Quest 3 中启动并发送
-
-1. 在头显中打开 `XRoboToolkit`。
-2. 输入 JAKA 主机的局域网 IP，可用 `hostname -I` 查看。
-3. 打开控制器 Tracking 和 Send。
-4. 确认头显与 JAKA 主机在同一可互访网段，并允许 PC-service 所需端口通过防火墙。
-
-推荐直接使用自动 adb 启动脚本。该脚本优先使用已连接设备，其次读取
-`demo/.quest_ip`，最后按 MAC 地址查询 ARP 表：
-
-```zsh
-"$HOME/Documents/dj_main/XRToolKit/demo/launch_quest.zsh"
-```
-
-第一次连接时建议接 USB；脚本会保存 Quest IP 并尝试建立 `5555` 无线 adb。后续运行
-不需要再手工执行 adb 命令。若网关隔离广播或 ARP 查询失败，可以显式指定：
-
-```zsh
-QUEST_IP=192.168.x.x "$HOME/Documents/dj_main/XRToolKit/demo/launch_quest.zsh"
-```
-
-### 3. 先验证 XRoboToolkit 数据
-
-不启动机械臂，先确认头显数据能到 PC-service：
-
-```zsh
-cd "$HOME/Documents/dj_main/XRToolKit"
-make -C demo run
-```
-
-终端出现 `[DATA] First Quest state received` 后，在头显中移动手柄并按键。更详细的
-PC-service SDK 路径检查：
-
-```zsh
-make -C demo info
-make -C demo XRT_SERVICE_ROOT=/opt/apps/roboticsservice
-```
-
-### 4. 启动双臂与夹爪
-
-```zsh
-cd "$HOME/Documents/dj_main/XRToolKit/demo"
-source "$HOME/Documents/dj_main/XRToolKit/demo/setup.zsh"
-
-ros2 launch jaka_driver dual_arm_teleop.launch.py \
-  robot_left_ip:=192.168.71.37 \
-  robot_right_ip:=192.168.71.36 \
-  gripper_rs485_channel:=1 \
-  gripper_force:=20 \
-  gripper_speed:=40 \
-  gripper_configure_tio:=false
-```
-
-默认 `use_rpy_ctrl:=true`，即同时控制位置和姿态。姿态采用相对控制：按下 Grip 的
-瞬间同时记录手柄位置与姿态作为零点，之后手臂跟随手柄的相对平移和相对旋转；松开
-Grip 后位置和姿态都停止更新。
-
-第一次验证旋转时，建议先使用较低旋转增益和角速度：
+默认 `use_rpy_ctrl:=true`，同时控制位置 XYZ 和姿态 RPY。第一次验证旋转时应降低增益：
 
 ```zsh
 ./run_teleop.zsh \
@@ -351,22 +359,28 @@ Grip 后位置和姿态都停止更新。
   rotation_max_step_rad:=0.001
 ```
 
-如果只需要原来的 XYZ 位置控制，可显式关闭姿态：
+只测试 XYZ 位置控制时：
 
 ```zsh
 ./run_teleop.zsh use_rpy_ctrl:=false
 ```
 
-如果不希望启动时初始化夹爪产生动作：
+不希望启动时初始化夹爪时：
 
 ```zsh
-ros2 launch jaka_driver dual_arm_teleop.launch.py \
+./run_teleop.zsh \
+  gripper_rs485_channel:=1 \
+  gripper_configure_tio:=false \
   gripper_initialize:=false
 ```
 
-### 5. 启动双臂 + AMR 底盘
+需要 AMR 底盘时，用 `RC_robot_bringup.launch.py` 替代第 3 步的
+`dual_arm_teleop.launch.py`：
 
 ```zsh
+cd "$HOME/Documents/dj_main/XRToolKit/demo"
+source "$HOME/Documents/dj_main/XRToolKit/demo/setup.zsh"
+
 ros2 launch robot_bringup RC_robot_bringup.launch.py \
   robot_left_ip:=192.168.71.37 \
   robot_right_ip:=192.168.71.36 \
@@ -374,6 +388,9 @@ ros2 launch robot_bringup RC_robot_bringup.launch.py \
   gripper_rs485_channel:=1 \
   gripper_configure_tio:=false
 ```
+
+不要同时启动 `dual_arm_teleop.launch.py` 和 `RC_robot_bringup.launch.py`，否则会创建
+重复的 JAKA 控制节点。
 
 ## 手柄映射
 
@@ -488,48 +505,26 @@ D405 是单目 RGB 相机，而当前 APK 的平面 Remote Vision 使用左右�
 会把同一幅 D405 图像复制成左右完全相同的 `2560x720` 侧并排画面，双眼中看到的图像
 一致，不会把单幅图像错误地拆给左右眼。它不提供真实立体深度。
 
-### D405 最短运行流程
+### D405 首次配置说明
 
-首次安装依赖并注入视频源：
+不要在机械臂尚未就绪时重复执行一套 D405 启动命令。D405 的安装、配置和运行分别对应
+标准流程的第 0、2、5、6 步：
 
-```zsh
-cd "$HOME/Documents/dj_main/XRToolKit/demo"
-./install_vision_deps.zsh
-./launch_quest.zsh
-./setup_d405_profile.zsh
-```
+- 第 0 步运行 `install_vision_deps.zsh`，安装 GStreamer、`x264enc`、V4L2 工具和
+  Python GI 绑定。
+- 第 2 步运行 `setup_d405_profile.zsh`，把 `REALSENSE_D405` 配置写入 Quest APK。
+- 第 5 步运行 `--list-devices` 和 `--check`，检查相机节点及 GStreamer 协商。
+- 第 5 步最后运行 `run_d405_vision.zsh`。
+- 第 6 步才在 Quest 中打开 Remote Vision。
 
-`video_source_d405.yml` 修改后必须重新执行 `./setup_d405_profile.zsh`，否则 Quest
-仍会使用 APK 数据目录中的旧配置。
+`video_source_d405.yml` 修改后必须重新执行 `setup_d405_profile.zsh`，否则 Quest 仍会
+使用 APK 数据目录中的旧配置。
 
-自动识别 D405 的彩色节点并实际协商视频管线：
+`REALSENSE_D405` 的 `camera` 类型保持为官方发送端和 APK 已验证的 `ZED`；
+`REALSENSE_D405` 只是 Remote Vision 中显示和选择的名字。发送端日志会显示实际请求
+类型，不需要把 `camera` 改成 `REALSENSE_D405`。
 
-```zsh
-./run_d405_vision.zsh --list-devices
-./run_d405_vision.zsh --check
-```
-
-保持 PC-service 和遥操作运行，在另一个终端启动视频：
-
-```zsh
-cd "$HOME/Documents/dj_main/XRToolKit/demo"
-./run_d405_vision.zsh
-```
-
-最后在 Quest 中打开 Remote Vision，选择 `REALSENSE_D405`，点击 `Listen`，输入运行
-`run_d405_vision.zsh` 的 JAKA **主机** IP 并点击 `Confirm`。不能填写 JAKA 控制器
-`192.168.71.36/37`、底盘 `192.168.71.50`，也不能填写 Quest 自己的 IP。
-
-### 1. 安装视频依赖
-
-```zsh
-cd "$HOME/Documents/dj_main/XRToolKit/demo"
-./install_vision_deps.zsh
-```
-
-这会安装 GStreamer、`x264enc`、V4L2 工具和 Python GI 绑定。
-
-### 2. 确认 D405 设备节点
+### D405 设备节点
 
 JAKA 主机连接多个摄像头时，不能把 `/dev/video0` 当成固定彩色节点。本次现场机器的
 `/dev/video0` 实际只提供 `Z16` 深度流，强制作为 `YUY2` 使用会在 GStreamer 中出现
@@ -575,39 +570,9 @@ D405 建议先使用 `1280x720@30`。默认输出为 Remote Vision 所需的
 ./run_d405_vision.zsh --capture-format MJPG
 ```
 
-### 3. 向 Quest APK 添加 D405 选项
+### D405 运行检查
 
-先运行 `launch_quest.zsh` 建立 adb 连接，然后执行：
-
-```zsh
-cd "$HOME/Documents/dj_main/XRToolKit/demo"
-./setup_d405_profile.zsh
-```
-
-脚本会自动选择 `com.xrobotoolkit.client.quest` 或
-`com.xrobotoolkit.client`，写入 `video_source.yml` 并重新启动 APK。Remote Vision
-下拉框中应出现：
-
-```text
-REALSENSE_D405
-```
-
-如果该选项没有出现，可以继续选择原来的 `ZEDMINI`，发送端也兼容该类型。
-
-`REALSENSE_D405` 的 `camera` 类型在配置中保持为官方发送端和 APK 已验证的 `ZED`；
-`REALSENSE_D405` 只是 Remote Vision 中显示和选择的名字。发送端日志会显示实际请求
-类型，不需要把 `camera` 改成 `REALSENSE_D405`。
-
-### 4. 启动 D405 发送端
-
-在 JAKA 主机上另开终端：
-
-```zsh
-cd "$HOME/Documents/dj_main/XRToolKit/demo"
-./run_d405_vision.zsh
-```
-
-看到下面日志表示 D405 彩色节点和编码器均已就绪，正在等待 Quest：
+标准流程第 5 步启动后，终端 C 应显示：
 
 ```text
 Selected /dev/video2 (...), capture=YUY2
@@ -629,7 +594,9 @@ Streaming D405 to 192.168.x.x:12345
 Video sent: frames=1 bytes=... last_frame=... bytes
 ```
 
-排查时按最后出现的日志判断：
+### D405 失败定位
+
+按终端 C 最后出现的日志判断：
 
 - 没有 `Remote Vision control connected`：Quest 中填错主机 IP，或者 TCP `13579` 被防火墙
   阻止。
@@ -662,6 +629,8 @@ adb logcat | grep -E "MediaDecoder|MediaCodec|RemoteCamera|StartListen|OPEN_CAME
 `MediaCodec ... started successfully`；若只看到 `MediaCodec not ready` 或
 `Failed to create MediaCodec decoder`，应保存这段日志后再调整编码参数。
 
+### D405 画质和编码选项
+
 如果 CPU 负载较高或 Wi-Fi 延迟大，可降到 `848x480@30` 采集并按需降低码率：
 
 ```zsh
@@ -677,13 +646,6 @@ Jetson/Orin 主机如已安装 NVIDIA GStreamer 编码器，可尝试：
 ```zsh
 ./run_d405_vision.zsh --encoder nvv4l2h264enc
 ```
-
-### 5. 在 Quest 中打开
-
-1. 保持 PC-service 和遥操作正常运行。
-2. 在 Quest 的 Remote Vision 中选择 `REALSENSE_D405`。
-3. 点击 Listen，输入发送端终端打印的 `In Quest Remote Vision, enter JAKA host IP`。
-4. 点击 Confirm。
 
 视频窗口固定在头显前方，因此移动或转头时始终显示 D405 的全局视角。D405 安装方向
 决定画面是否倒置；若需要旋转 180°，后续应在发送端增加旋转参数，而不是旋转头显
