@@ -5,6 +5,7 @@ xrt_teleop_bridge:
     button_topic: /rc_ctrl/button
     publish_rate: 125.0
     smooth_alpha: 0.4
+    input_log_period: 5.0
     pose_scale: 1.0
     grip_threshold: 0.5
     enable_left: true

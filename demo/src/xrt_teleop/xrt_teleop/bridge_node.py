@@ -48,6 +48,9 @@ class XrtTeleopBridge(Node):
         self.grip_threshold = float(
             self.declare_parameter("grip_threshold", 0.5).value
         )
+        self.input_log_period = float(
+            self.declare_parameter("input_log_period", 5.0).value
+        )
         self.enable_left = bool(
             self.declare_parameter("enable_left", True).value
         )
@@ -78,6 +81,7 @@ class XrtTeleopBridge(Node):
             raise ValueError("pose_scale must be positive")
         self.smooth_alpha = max(0.0, min(1.0, self.smooth_alpha))
         self.grip_threshold = max(0.0, min(1.0, self.grip_threshold))
+        self.input_log_period = max(0.0, self.input_log_period)
 
         qos = QoSProfile(depth=1)
         self.left_publisher = self.create_publisher(
@@ -93,9 +97,8 @@ class XrtTeleopBridge(Node):
         self._filtered = {"left": None, "right": None}
         self._pose_was_valid = {"left": False, "right": False}
         self._last_valid_trigger = {"left": 0.0, "right": 0.0}
-        self._last_axes = None
-        self._last_buttons = None
         self._last_warning_time = 0.0
+        self._last_input_log_time = 0.0
         self._xrt = None
         self._sdk_initialized = False
         self._initialize_sdk()
@@ -266,30 +269,44 @@ class XrtTeleopBridge(Node):
         joy.header.stamp = self.get_clock().now().to_msg()
         joy.axes = axes
         joy.buttons = buttons
-        joy_changed = (
-            self._last_axes is None
-            or self._last_buttons is None
-            or any(
-                abs(current - previous) > 1e-6
-                for current, previous in zip(axes, self._last_axes)
+        # Publish continuously so rc_ctrl receives the current Grip state even
+        # when it subscribes several seconds after this bridge while the arms
+        # are still powering on and entering servo mode.
+        self.button_publisher.publish(joy)
+
+        now = time.monotonic()
+        if (
+            self.input_log_period > 0.0
+            and now - self._last_input_log_time >= self.input_log_period
+            and (
+                left.get("pose_valid", False)
+                or right.get("pose_valid", False)
             )
-            or buttons != self._last_buttons
-        )
-        if joy_changed:
-            self.button_publisher.publish(joy)
-            self._last_axes = list(axes)
-            self._last_buttons = list(buttons)
+        ):
+            self.get_logger().info(
+                "Quest input: left tracked=%s grip=%.3f trigger=%.3f | "
+                "right tracked=%s grip=%.3f trigger=%.3f"
+                % (
+                    left.get("pose_valid", False),
+                    left.get("grip", 0.0),
+                    left.get("trigger", 0.0),
+                    right.get("pose_valid", False),
+                    right.get("grip", 0.0),
+                    right.get("trigger", 0.0),
+                )
+            )
+            self._last_input_log_time = now
 
         if (
             not left.get("pose_valid", False)
             and not right.get("pose_valid", False)
-            and time.monotonic() - self._last_warning_time > 5.0
+            and now - self._last_warning_time > 5.0
         ):
             self.get_logger().warning(
                 "No tracked Quest controllers; check PC-service, Quest app, "
                 "tracking, and Send"
             )
-            self._last_warning_time = time.monotonic()
+            self._last_warning_time = now
 
     def close(self):
         if self._sdk_initialized and self._xrt is not None:

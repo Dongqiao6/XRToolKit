@@ -17,6 +17,29 @@ Quest 3 的 MAC 地址为 `50:99:03:0a:38:78`。XRoboToolkit 使用 PC-service �
 一句话顺序：`PC-service -> JAKA 双臂就绪 -> D405 发送端 -> Quest Remote Vision`。
 日常运行且配置未变化时跳过第 0 步和第 2 步，严格按第 1、3、4、5、6、7 步执行。
 
+### 修改代码后的固定编译命令
+
+每次修改任何 Python、C++、YAML、launch、脚本或依赖后，必须先停止正在运行的
+`run_teleop.zsh`，然后执行：
+
+```zsh
+cd "$HOME/Documents/dj_main/XRToolKit/demo"
+
+./build.zsh
+source "$HOME/Documents/dj_main/XRToolKit/demo/setup.zsh"
+ros2 pkg prefix jaka_driver
+```
+
+编译完成后重新执行标准流程第 3 步。只有修改了 `CMakeLists.txt`、`package.xml`、
+JAKA SDK、依赖或出现旧编译缓存冲突时，才使用完整清理重建：
+
+```zsh
+cd "$HOME/Documents/dj_main/XRToolKit/demo"
+./clean.zsh
+./build.zsh
+source "$HOME/Documents/dj_main/XRToolKit/demo/setup.zsh"
+```
+
 ### 0. 首次安装或代码更新后执行
 
 只有第一次部署、代码或依赖发生变化时需要执行：
@@ -150,6 +173,28 @@ D405 发送端的 JAKA 主机地址，不能是 JAKA 控制器 `192.168.71.36/37
 
 此时双臂遥操作和 D405 画面应同时工作。左手柄 Grip 控制左臂，右手柄 Grip 控制右臂，
 松开 Grip 后停止；左手 Trigger 控制左夹爪，右手 Trigger 控制右夹爪。
+
+`xrt_teleop_bridge` 每 5 秒打印一次原始输入，例如：
+
+```text
+Quest input: left tracked=True grip=0.000 trigger=0.000 | right tracked=True grip=0.000 trigger=0.000
+```
+
+按住右手 Grip 后应变成接近 `1.000`，并在对应 `rc_ctrl` 终端依次看到：
+
+```text
+[right] Grip pressed (raw=1.000, press>0.60 release<0.40)
+[right] gripped, ctrl_origin=(...), 6D=true
+```
+
+松开后应看到：
+
+```text
+[right] Grip released (raw=0.000, press>0.60 release<0.40)
+```
+
+左臂同理。Grip 状态现在由 `xrt_teleop_bridge` 以 125 Hz 持续发布，不再只在数值变化
+时发布，因此即使 `rc_ctrl` 比 bridge 晚十几秒启动，也能收到当前状态。
 
 ### 7. 关闭顺序
 
@@ -678,15 +723,15 @@ cd "$HOME/Documents/dj_main/XRToolKit/demo"
 ros2 topic echo /rc_ctrl/button --once
 ros2 topic hz /rc_ctrl/right_target
 ros2 topic hz /rc_ctrl/left_target
+ros2 topic hz /rc_ctrl/button
 ros2 topic echo /rc_ctrl/left_target --once
 ros2 topic echo /rc_ctrl/right_target --once
 ```
 
 头显未跟踪到手柄时，`xrt_teleop` 不发布对应位姿，并发布 Grip=0 使机械臂停止；
-Trigger 保持最后一次有效值，避免跟踪中断时夹爪突然动作。Joy 只在值变化时发布，
-与旧 `quest_reader` 的行为一致。因此不要在静止时用
-`ros2 topic hz /rc_ctrl/button` 判断链路是否正常。按住 Grip 后 `rc_ctrl` 日志应出现
-对应臂的 `gripped`；松开后应停止更新目标并发送零增量保持。
+Trigger 保持最后一次有效值，避免跟踪中断时夹爪突然动作。Joy 现在持续发布，
+`ros2 topic hz /rc_ctrl/button` 应显示接近 125 Hz。按住 Grip 后，bridge 与 `rc_ctrl`
+日志应分别出现原始 Grip 数值、`Grip pressed` 和 `gripped`。
 
 ## 安全注意事项
 
@@ -798,13 +843,21 @@ cd "$HOME/Documents/dj_main/XRToolKit/demo"
 
 **机械臂不动**
 
-先确认 `run_teleop.zsh` 正在运行；D405 发送端本身不会控制机械臂。然后依次检查：
+先确认 `run_teleop.zsh` 正在运行；D405 发送端本身不会控制机械臂。修改过本轮 Grip
+发布代码后，必须先执行“修改代码后的固定编译命令”。然后依次检查：
 
-1. `./diagnose_xrt.zsh` 中对应手柄不是 `untracked`，移动手柄时姿态变化，握住 Grip
-   时数值从 0 变为接近 1。
-2. `ros2 topic hz /rc_ctrl/right_target`（或 `left_target`）有接近 125 Hz 的数据。
-3. `rc_ctrl` 日志包含 `gripped`，没有 `servo_p failed`、`ERR_NOT_ENABLED` 或碰撞错误。
-4. `enable_y_limit` 与当前 TCP 位置没有阻止向双臂中心线方向的运动。
+1. 跑 `./diagnose_xrt.zsh` 时，对应手柄不能是 `untracked`，握住 Grip 时 `grip`
+   必须从 0 变为接近 1。
+2. 正常运行 `run_teleop.zsh` 时，bridge 日志 `Quest input` 中的 `grip` 应随 Grip
+   变化；若一直为 0，问题在 APK、PC-service 或手柄输入。
+3. 按 Grip 后 `rc_ctrl` 必须打印 `Grip pressed`；没有这一行说明 Joy 没有到达控制节点。
+4. 有 `Grip pressed` 后必须继续打印 `gripped`；没有则检查 JAKA 伺服重新使能逻辑。
+5. `ros2 topic hz /rc_ctrl/button` 和对应臂的 `target` 话题应接近 125 Hz。
+6. 有 `gripped` 后仍不动，检查 `servo_p failed`、碰撞、`ERR_NOT_ENABLED`、
+   `enable_y_limit` 和 JAKA 安全停止状态。
+
+日志中的 `sequence size exceeds remaining buffer` 来自 JAKA SDK 内部的协议调试输出，
+在没有 `servo_p failed` 时不是本工程的 JSON/文本解析错误，也不是机械臂不动的直接原因。
 
 若原始 `grip` 变化但话题没有变化，检查 APK 的 Send 和 PC-service；若 `/rc_ctrl/button`
 变化且有 `gripped`，但姿态话题没有数据，检查 Controller Tracking；若二者都正常但仍

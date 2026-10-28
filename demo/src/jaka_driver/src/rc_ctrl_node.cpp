@@ -515,6 +515,13 @@ void handle_grip(float value)
     const bool now = jaka_teleop::grip_state(
         was_pressed, value, grip_press_threshold, grip_release_threshold);
     grip_now = now;  // mirror current grip so the re-arm thread can check it
+    if (now != was_pressed)
+    {
+        RCLCPP_INFO(rclcpp::get_logger("rc_ctrl"),
+                    "[%s] Grip %s (raw=%.3f, press>%.2f release<%.2f)",
+                    arm_name.c_str(), now ? "pressed" : "released", value,
+                    grip_press_threshold, grip_release_threshold);
+    }
     if (now)
         hold_stream_enabled = false;
     if (now && !gripped && !rearming)
