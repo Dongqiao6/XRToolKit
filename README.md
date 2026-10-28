@@ -83,7 +83,9 @@ ros2 launch robot_bringup RC_robot_bringup.launch.py \
 `left login FAILED ... ERR_INVALID_HANDLER`；请上电后重新启动整套 launch。
 
 如果还需要把 D405 全局画面显示到 Quest 中，另开一个终端运行 D405 视频发送端，并在
-Remote Vision 中选择 `REALSENSE_D405`。完整步骤见“D405 低时延远程视觉”章节。
+Remote Vision 中选择 `REALSENSE_D405`。`run_d405_vision.zsh` 只负责视频，不会启动
+JAKA 遥操作；`run_teleop.zsh` 必须同时在另一个终端运行。完整步骤见“D405 低时延
+远程视觉”章节。
 
 以后每次运行，如果工作区代码和编译选项没有变化，可直接执行
 `./run_teleop.zsh ...`。如果自动 adb 启动失败，可设置 Quest IP 后重试：
@@ -117,8 +119,9 @@ demo/
 ├── setup_d405_profile.zsh   # 向 APK 注入 REALSENSE_D405 视频源
 ├── install_vision_deps.zsh  # 安装 GStreamer/V4L2 视频依赖
 ├── run_d405_vision.zsh      # 启动 D405 H.264 发送端
-├── d405_vision/             # D405 视频源、协议发送端和配置
+├── d405_vision/             # D405 设备发现、视频源、发送端和配置
 ├── run_teleop.zsh           # 一键启动 Quest + 双臂遥操作
+├── diagnose_xrt.zsh         # 原始手柄位姿、Grip 和 Trigger 诊断
 ├── xrt_receive_test.cpp     # PC-service 原始数据诊断程序
 ├── Makefile
 └── .gitignore
@@ -492,23 +495,22 @@ D405 是单目 RGB 相机，而当前 APK 的平面 Remote Vision 使用左右�
 ```zsh
 cd "$HOME/Documents/dj_main/XRToolKit/demo"
 ./install_vision_deps.zsh
-v4l2-ctl --list-devices
 ./launch_quest.zsh
 ./setup_d405_profile.zsh
 ```
 
-确认下方命令输出的设备、分辨率、帧率和格式可用：
+自动识别 D405 的彩色节点并实际协商视频管线：
 
 ```zsh
-v4l2-ctl --list-formats-ext -d /dev/video0
-./run_d405_vision.zsh --check --device /dev/video0
+./run_d405_vision.zsh --list-devices
+./run_d405_vision.zsh --check
 ```
 
 保持 PC-service 和遥操作运行，在另一个终端启动视频：
 
 ```zsh
 cd "$HOME/Documents/dj_main/XRToolKit/demo"
-./run_d405_vision.zsh --device /dev/video0
+./run_d405_vision.zsh
 ```
 
 最后在 Quest 中打开 Remote Vision，选择 `REALSENSE_D405`，点击 `Listen`，输入 JAKA
@@ -525,32 +527,48 @@ cd "$HOME/Documents/dj_main/XRToolKit/demo"
 
 ### 2. 确认 D405 设备节点
 
+JAKA 主机连接多个摄像头时，不能把 `/dev/video0` 当成固定彩色节点。本次现场机器的
+`/dev/video0` 实际只提供 `Z16` 深度流，强制作为 `YUY2` 使用会在 GStreamer 中出现
+`reason not-negotiated (-4)`，Quest 只显示 Remote Vision 的绿色占位框。
+
+发送端默认使用 `--device auto`，通过 RealSense D405 的 USB 产品 ID `0b5b` 找到 D405，
+再排除 `Z16` 等深度格式，只选择 `YUYV/YUY2`、`UYVY` 或 `MJPG` 彩色节点。其他型号的
+RealSense 和普通 USB 摄像头不会进入候选列表。
+
 ```zsh
-v4l2-ctl --list-devices
-v4l2-ctl --list-formats-ext -d /dev/video0
+cd "$HOME/Documents/dj_main/XRToolKit/demo"
+./run_d405_vision.zsh --list-devices
 ```
 
-在输出中找到 Intel RealSense D405 对应的彩色视频节点。若彩色节点不是
-`/dev/video0`，后续命令使用实际节点，例如：
+输出应包含类似内容：
+
+```text
+/dev/video0 | D405 | USB 8086:0b5b | ... | no color | formats=Z16
+/dev/video2 | D405 | USB 8086:0b5b | ... | YUY2 | formats=Z16, YUYV, MJPG
+Selected D405 color source: /dev/video2 (YUY2)
+```
+
+实际编号以上述输出为准。只有需要覆盖自动识别时才显式指定：
 
 ```zsh
 ./run_d405_vision.zsh --device /dev/video2
 ```
 
-可先检查 GStreamer 编码器和管道配置：
+下面的 `--check` 会打开所选彩色节点并实际完成一次 GStreamer 协商，不再只是打印
+管线文本：
 
 ```zsh
-./run_d405_vision.zsh --check --device /dev/video0
+./run_d405_vision.zsh --check
 ```
 
 D405 建议先使用 `1280x720@30`。默认输出为 Remote Vision 所需的
 `2560x720@30`、4 Mbps。
 
-发送端默认按 RealSense 常见的 `YUY2` V4L2 格式采集。如果
-`v4l2-ctl --list-formats-ext` 中彩色节点只提供 `MJPG`，改用：
+`--capture-format AUTO` 会优先使用低延迟的 `YUY2`，没有 `YUY2` 时使用其他已报告
+的彩色格式。通常不需要手工指定；需要覆盖时才使用：
 
 ```zsh
-./run_d405_vision.zsh --device /dev/video0 --capture-format MJPG
+./run_d405_vision.zsh --capture-format MJPG
 ```
 
 ### 3. 向 Quest APK 添加 D405 选项
@@ -578,20 +596,24 @@ REALSENSE_D405
 
 ```zsh
 cd "$HOME/Documents/dj_main/XRToolKit/demo"
-./run_d405_vision.zsh --device /dev/video0
+./run_d405_vision.zsh
 ```
 
-看到下面日志表示正在等待 Quest：
+看到下面日志表示 D405 彩色节点和编码器均已就绪，正在等待 Quest：
 
 ```text
+Selected /dev/video2 (...), capture=YUY2
 Waiting for Quest Remote Vision on 0.0.0.0:13579
 ```
+
+Quest 点击 Confirm 后还应出现 `OPEN_CAMERA` 和 `Streaming D405 ...`。如果再次出现
+`not-negotiated`，先运行 `./run_d405_vision.zsh --list-devices`，不要把深度节点作为
+`--device` 参数。
 
 如果 CPU 负载较高或 Wi-Fi 延迟大，可降到 `848x480@30` 采集并按需降低码率：
 
 ```zsh
 ./run_d405_vision.zsh \
-  --device /dev/video0 \
   --source-width 848 \
   --source-height 480 \
   --fps 30 \
@@ -625,16 +647,32 @@ Jetson/Orin 主机如已安装 NVIDIA GStreamer 编码器，可尝试：
 
 ## 检查话题
 
+先排查 Quest 原始输入。运行前停止 `run_teleop.zsh`，避免两个进程同时初始化 SDK：
+
 ```zsh
-ros2 topic hz /rc_ctrl/button
+cd "$HOME/Documents/dj_main/XRToolKit/demo"
+./diagnose_xrt.zsh
+```
+
+未跟踪时输出 `untracked`；抓住手柄时应看到姿态数值持续变化，握住 Grip 时对应
+`grip` 接近 `1.000`，按 Trigger 时 `trigger` 接近 `1.000`。按 `Ctrl-C` 结束，再
+重新启动 `run_teleop.zsh`。
+
+遥操作启动后，用另一个终端检查 ROS 话题：
+
+```zsh
 ros2 topic echo /rc_ctrl/button --once
+ros2 topic hz /rc_ctrl/right_target
+ros2 topic hz /rc_ctrl/left_target
 ros2 topic echo /rc_ctrl/left_target --once
 ros2 topic echo /rc_ctrl/right_target --once
 ```
 
 头显未跟踪到手柄时，`xrt_teleop` 不发布对应位姿，并发布 Grip=0 使机械臂停止；
 Trigger 保持最后一次有效值，避免跟踪中断时夹爪突然动作。Joy 只在值变化时发布，
-与旧 `quest_reader` 的行为一致。
+与旧 `quest_reader` 的行为一致。因此不要在静止时用
+`ros2 topic hz /rc_ctrl/button` 判断链路是否正常。按住 Grip 后 `rc_ctrl` 日志应出现
+对应臂的 `gripped`；松开后应停止更新目标并发送零增量保持。
 
 ## 安全注意事项
 
@@ -746,8 +784,17 @@ cd "$HOME/Documents/dj_main/XRToolKit/demo"
 
 **机械臂不动**
 
-确认对应 Grip 已按住、`/rc_ctrl/{left,right}_target` 有数据、JAKA 登录和使能日志
-正常，并检查 `enable_y_limit` 与机械臂当前 TCP 位置。
+先确认 `run_teleop.zsh` 正在运行；D405 发送端本身不会控制机械臂。然后依次检查：
+
+1. `./diagnose_xrt.zsh` 中对应手柄不是 `untracked`，移动手柄时姿态变化，握住 Grip
+   时数值从 0 变为接近 1。
+2. `ros2 topic hz /rc_ctrl/right_target`（或 `left_target`）有接近 125 Hz 的数据。
+3. `rc_ctrl` 日志包含 `gripped`，没有 `servo_p failed`、`ERR_NOT_ENABLED` 或碰撞错误。
+4. `enable_y_limit` 与当前 TCP 位置没有阻止向双臂中心线方向的运动。
+
+若原始 `grip` 变化但话题没有变化，检查 APK 的 Send 和 PC-service；若 `/rc_ctrl/button`
+变化且有 `gripped`，但姿态话题没有数据，检查 Controller Tracking；若二者都正常但仍
+不动，检查 JAKA 登录、上电、使能、伺服模式和安全停止状态。
 
 **夹爪不动**
 

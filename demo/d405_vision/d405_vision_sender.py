@@ -12,6 +12,12 @@ import sys
 import threading
 import time
 
+from device_discovery import (
+    discover_video_devices,
+    format_device_table,
+    select_capture_source,
+)
+
 try:
     import gi
 
@@ -189,6 +195,12 @@ def build_pipeline(
                 f"! video/x-raw,format=YUY2,width={source_width},"
                 f"height={source_height},framerate={fps}/1"
             )
+        elif normalized_format == "UYVY":
+            source = (
+                f"v4l2src device={device} do-timestamp=true "
+                f"! video/x-raw,format=UYVY,width={source_width},"
+                f"height={source_height},framerate={fps}/1"
+            )
         elif normalized_format in ("MJPG", "MJPEG"):
             source = (
                 f"v4l2src device={device} do-timestamp=true "
@@ -199,7 +211,7 @@ def build_pipeline(
             source = f"v4l2src device={device} do-timestamp=true ! decodebin"
         else:
             raise ValueError(
-                "capture format must be YUY2, MJPG, or AUTO"
+                "capture format must be YUY2, UYVY, MJPG, or AUTO"
             )
         source += (
             f" ! videoconvert ! videoscale "
@@ -354,13 +366,20 @@ class SenderServer:
         self.stop_stream()
 
         encoder = available_encoder(self.args.encoder)
+        device = self.args.device
+        capture_format = self.args.capture_format
+        if not self.args.test_source:
+            selected, capture_format = resolve_capture_source(
+                self.args, quiet=False
+            )
+            device = selected.path
         output_width = request.width if request.width >= 2 else 2560
         output_height = request.height if request.height > 0 else 720
         fps = self.args.fps
         description = build_pipeline(
-            device=self.args.device,
+            device=device,
             test_source=self.args.test_source,
-            capture_format=self.args.capture_format,
+            capture_format=capture_format,
             source_width=self.args.source_width,
             source_height=self.args.source_height,
             fps=fps,
@@ -383,6 +402,14 @@ class SenderServer:
         if self.session is not None:
             self.session.stop()
             self.session = None
+
+    def preflight(self):
+        if self.args.test_source:
+            return
+        try:
+            resolve_capture_source(self.args, quiet=False)
+        except Exception as exc:
+            raise RuntimeError("D405 camera preflight failed: %s" % exc) from exc
 
     def _handle_client(self, client):
         client.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
@@ -452,14 +479,18 @@ def build_arg_parser():
         description="Low-latency Intel RealSense D405 sender for XRoboToolkit Remote Vision"
     )
     parser.add_argument("--bind", default=f"0.0.0.0:{CONTROL_PORT}")
-    parser.add_argument("--device", default="/dev/video0")
+    parser.add_argument(
+        "--device",
+        default="auto",
+        help="D405 V4L2 color node, or auto (default)",
+    )
     parser.add_argument("--source-width", type=int, default=1280)
     parser.add_argument("--source-height", type=int, default=720)
     parser.add_argument(
         "--capture-format",
-        default="YUY2",
-        choices=("YUY2", "YUYV", "MJPG", "MJPEG", "AUTO", "auto"),
-        help="V4L2 capture format; check v4l2-ctl --list-formats-ext",
+        default="AUTO",
+        choices=("YUY2", "YUYV", "UYVY", "MJPG", "MJPEG", "AUTO", "auto"),
+        help="V4L2 capture format; AUTO selects from the D405 color node",
     )
     parser.add_argument("--fps", type=int, default=30)
     parser.add_argument("--bitrate", type=int, default=4000000)
@@ -469,8 +500,60 @@ def build_arg_parser():
         help="auto, x264enc, openh264enc, v4l2h264enc, or nvv4l2h264enc",
     )
     parser.add_argument("--test-source", action="store_true")
+    parser.add_argument(
+        "--list-devices",
+        action="store_true",
+        help="List V4L2 nodes and identify the D405 color node",
+    )
     parser.add_argument("--check", action="store_true")
     return parser
+
+
+def resolve_capture_source(args, quiet=False):
+    devices = discover_video_devices()
+    device, capture_format = select_capture_source(
+        devices,
+        requested_device=args.device,
+        width=args.source_width,
+        height=args.source_height,
+        fps=args.fps,
+    )
+    if args.capture_format.upper() not in ("AUTO",):
+        requested_format = args.capture_format.upper()
+        if requested_format in ("YUYV",):
+            requested_format = "YUY2"
+        if requested_format in ("MJPEG",):
+            requested_format = "MJPG"
+        capture_format = requested_format
+    if not quiet:
+        LOG.info(
+            "Selected %s (%s, USB %s:%s, serial=%s), capture=%s",
+            device.path,
+            device.card,
+            device.vendor_id or "?",
+            device.product_id or "?",
+            device.serial or "?",
+            capture_format,
+        )
+    return device, capture_format
+
+
+def validate_pipeline(description):
+    pipeline = Gst.parse_launch(description)
+    if pipeline is None:
+        raise RuntimeError("cannot create GStreamer pipeline")
+    try:
+        pipeline.set_state(Gst.State.PAUSED)
+        return_value, state, _ = pipeline.get_state(5 * Gst.SECOND)
+        bus = pipeline.get_bus()
+        message = bus.pop_filtered(Gst.MessageType.ERROR)
+        if message is not None:
+            error, debug = message.parse_error()
+            raise RuntimeError("%s (%s)" % (error.message, debug))
+        if return_value == Gst.StateChangeReturn.FAILURE:
+            raise RuntimeError("GStreamer could not reach PAUSED state")
+    finally:
+        pipeline.set_state(Gst.State.NULL)
 
 
 def main(argv=None):
@@ -489,13 +572,33 @@ def main(argv=None):
     except ValueError:
         parser.error("--bind port must be an integer")
 
+    if args.list_devices:
+        try:
+            devices = discover_video_devices()
+            print(format_device_table(devices))
+            if not args.test_source:
+                selected, capture_format = resolve_capture_source(args, quiet=True)
+                print(
+                    "Selected D405 color source: %s (%s)"
+                    % (selected.path, capture_format)
+                )
+        except Exception as exc:
+            print(f"device discovery failed: {exc}", file=sys.stderr)
+            return 1
+        return 0
+
     if args.check:
         try:
             encoder = available_encoder(args.encoder)
+            device = args.device
+            capture_format = args.capture_format
+            if not args.test_source:
+                selected, capture_format = resolve_capture_source(args, quiet=False)
+                device = selected.path
             description = build_pipeline(
-                device=args.device,
+                device=device,
                 test_source=args.test_source,
-                capture_format=args.capture_format,
+                capture_format=capture_format,
                 source_width=args.source_width,
                 source_height=args.source_height,
                 fps=args.fps,
@@ -504,8 +607,7 @@ def main(argv=None):
                 bitrate=args.bitrate,
                 encoder=encoder,
             )
-            pipeline = Gst.parse_launch(description)
-            pipeline.set_state(Gst.State.NULL)
+            validate_pipeline(description)
         except Exception as exc:
             print(f"check failed: {exc}", file=sys.stderr)
             return 1
@@ -515,9 +617,13 @@ def main(argv=None):
 
     server = SenderServer(args)
     try:
+        server.preflight()
         server.serve_forever()
     except KeyboardInterrupt:
         pass
+    except RuntimeError as exc:
+        print(exc, file=sys.stderr)
+        return 1
     finally:
         server.stop_stream()
     return 0

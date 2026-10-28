@@ -2,6 +2,13 @@ import struct
 import unittest
 from pathlib import Path
 
+from device_discovery import (
+    VideoDevice,
+    VideoFormat,
+    VideoMode,
+    parse_formats_ext,
+    select_capture_source,
+)
 from d405_vision_sender import (
     CameraRequest,
     build_pipeline,
@@ -83,6 +90,107 @@ class D405VisionSenderTest(unittest.TestCase):
         )
         self.assertIn("image/jpeg", pipeline)
         self.assertIn("jpegdec", pipeline)
+
+    def test_uyvy_capture_is_supported(self):
+        pipeline = build_pipeline(
+            device="/dev/video2",
+            test_source=False,
+            capture_format="UYVY",
+            source_width=1280,
+            source_height=720,
+            fps=30,
+            output_width=2560,
+            output_height=720,
+            bitrate=4000000,
+            encoder="x264enc",
+        )
+        self.assertIn("format=UYVY,width=1280,height=720", pipeline)
+
+    def test_formats_ext_separates_depth_and_color(self):
+        formats = parse_formats_ext(
+            """
+	[0]: 'Z16 ' (16-bit Depth)
+		Size: Discrete 1280x720
+			Interval: Discrete 0.033s (30.000 fps)
+	[1]: 'YUYV' (YUYV 4:2:2)
+		Size: Discrete 1280x720
+			Interval: Discrete 0.033s (30.000 fps)
+"""
+        )
+        self.assertEqual(formats[0].name, "Z16")
+        self.assertEqual(formats[1].name, "YUYV")
+        self.assertEqual(formats[1].modes[0], VideoMode(1280, 720, 30))
+
+    def test_auto_selects_d405_color_node(self):
+        color = VideoDevice(
+            path="/dev/video2",
+            card="Intel(R) RealSense(TM) Depth Camera 405",
+            product_id="0b5b",
+            serial="d405",
+            formats=(
+                VideoFormat(
+                    "YUYV", (VideoMode(1280, 720, 30),)
+                ),
+            ),
+        )
+        other_camera = VideoDevice(
+            path="/dev/video7",
+            card="Another Camera",
+            product_id="1234",
+            formats=(
+                VideoFormat(
+                    "MJPG", (VideoMode(1280, 720, 30),)
+                ),
+            ),
+        )
+        selected, capture_format = select_capture_source(
+            [
+                VideoDevice(path="/dev/video0", product_id="0b5b", formats=(
+                    VideoFormat("Z16", (VideoMode(1280, 720, 30),)),
+                )),
+                color,
+                other_camera,
+            ],
+            requested_device="auto",
+            width=1280,
+            height=720,
+            fps=30,
+        )
+        self.assertEqual(selected.path, "/dev/video2")
+        self.assertEqual(capture_format, "YUY2")
+
+    def test_prefers_yuy2_even_when_mjpg_is_listed_first(self):
+        camera = VideoDevice(
+            path="/dev/video3",
+            product_id="0b5b",
+            formats=(
+                VideoFormat("MJPG", (VideoMode(1280, 720, 30),)),
+                VideoFormat("YUYV", (VideoMode(1280, 720, 30),)),
+            ),
+        )
+        _, capture_format = select_capture_source(
+            [camera],
+            requested_device="auto",
+            width=1280,
+            height=720,
+            fps=30,
+        )
+        self.assertEqual(capture_format, "YUY2")
+
+    def test_explicit_depth_node_is_rejected(self):
+        depth = VideoDevice(
+            path="/dev/video0",
+            product_id="0b5b",
+            formats=(VideoFormat("Z16", (VideoMode(1280, 720, 30),)),),
+        )
+        with self.assertRaisesRegex(RuntimeError, "not a color-capture node"):
+            select_capture_source(
+                [depth],
+                requested_device="/dev/video0",
+                width=1280,
+                height=720,
+                fps=30,
+            )
 
     def test_d405_profile_matches_sbs_output(self):
         profile = Path(__file__).with_name("video_source_d405.yml").read_text(
