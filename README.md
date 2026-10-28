@@ -673,6 +673,31 @@ Video sent: frames=30 bytes=... last_frame=... bytes
 Video sent: frames=150 bytes=... last_frame=... bytes
 ```
 
+如果先发送了几十帧，约 3 秒后又出现：
+
+```text
+WARNING Control session ended: timed out
+D405 stream stopped (frames=89, bytes=...)
+Remote Vision control disconnected
+```
+
+说明运行的是修复控制通道空闲超时之前的版本。Remote Vision 在 `OPEN_CAMERA` 后通常
+不会持续发送控制命令，旧代码把正常的读超时误判成断线并停止视频。现在控制连接会：
+
+- 每秒继续发送一次 `PING`；
+- 允许正常的 `socket.timeout`，保持视频流不停；
+- 只有对端真正关闭 TCP 或发生网络错误时才停止。
+
+本次只修改了 `d405_vision/` 下的直接运行脚本，不需要 colcon 编译。停止 D405 终端后
+重新执行：
+
+```zsh
+cd "$HOME/Documents/dj_main/XRToolKit/demo"
+./run_d405_vision.zsh
+```
+
+修复后不会再因空闲 3 秒触发 `Control session ended: timed out`，`frames` 应持续增加。
+
 不打开 D405，只发送标准测试画面：
 
 ```zsh

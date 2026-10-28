@@ -51,16 +51,38 @@ class CameraRequest:
     ip: str
 
 
-def recv_exact(sock, size):
-    chunks = []
-    remaining = size
-    while remaining:
-        chunk = sock.recv(remaining)
-        if not chunk:
-            raise ConnectionError("control connection closed")
-        chunks.append(chunk)
-        remaining -= len(chunk)
-    return b"".join(chunks)
+class ControlFrameReader:
+    """Read length-framed control messages without treating idle as disconnect."""
+
+    def __init__(self, sock, read_size=4096, max_body_bytes=2 * 1024 * 1024):
+        self._socket = sock
+        self._read_size = read_size
+        self._max_body_bytes = max_body_bytes
+        self._buffer = bytearray()
+
+    def next_body(self):
+        while True:
+            if len(self._buffer) >= FRAME_HEADER.size:
+                body_length = FRAME_HEADER.unpack_from(self._buffer, 0)[0]
+                if body_length <= 0 or body_length > self._max_body_bytes:
+                    raise ValueError(
+                        "invalid control body length: %d" % body_length
+                    )
+                frame_size = FRAME_HEADER.size + body_length
+                if len(self._buffer) >= frame_size:
+                    body = bytes(self._buffer[FRAME_HEADER.size:frame_size])
+                    del self._buffer[:frame_size]
+                    return body
+
+            try:
+                chunk = self._socket.recv(self._read_size)
+            except socket.timeout:
+                # Remote Vision commonly sends no command after OPEN_CAMERA.
+                # Keep the session and PING heartbeat alive while waiting.
+                continue
+            if not chunk:
+                raise ConnectionError("control connection closed")
+            self._buffer.extend(chunk)
 
 
 def encode_command(command, data=b""):
@@ -488,10 +510,11 @@ class SenderServer:
 
     def _handle_client(self, client):
         client.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
-        client.settimeout(3.0)
+        client.settimeout(1.0)
         LOG.info("Remote Vision control connected from %s", client.getpeername())
         heartbeat_stop = threading.Event()
         send_lock = threading.Lock()
+        frame_reader = ControlFrameReader(client)
 
         def heartbeat_loop():
             while not heartbeat_stop.wait(1.0):
@@ -509,10 +532,7 @@ class SenderServer:
             with send_lock:
                 client.sendall(encode_command("PING", b"d405"))
             while True:
-                body_length = FRAME_HEADER.unpack(recv_exact(client, 4))[0]
-                if body_length <= 0 or body_length > 2 * 1024 * 1024:
-                    raise ValueError(f"invalid control body length: {body_length}")
-                body = recv_exact(client, body_length)
+                body = frame_reader.next_body()
                 command, data = parse_command_body(body)
                 LOG.info("Control command: %s (%d bytes)", command, len(data))
                 if command == "OPEN_CAMERA":

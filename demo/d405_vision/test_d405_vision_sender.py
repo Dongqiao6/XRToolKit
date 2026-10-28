@@ -1,4 +1,5 @@
 import struct
+import socket
 import unittest
 from pathlib import Path
 
@@ -11,6 +12,7 @@ from device_discovery import (
 )
 from d405_vision_sender import (
     CameraRequest,
+    ControlFrameReader,
     FRAME_HEADER,
     StreamSession,
     build_pipeline,
@@ -57,6 +59,29 @@ class D405VisionSenderTest(unittest.TestCase):
             "REALSENSE_D405", "192.168.1.20",
         )
         self.assertEqual(parse_camera_request(camera_request_data(request)), request)
+
+    def test_control_reader_survives_idle_timeout_and_partial_reads(self):
+        packet = encode_command("PING", b"idle")
+        body = packet[FRAME_HEADER.size:]
+
+        class Socket:
+            def __init__(self):
+                self.chunks = [
+                    socket.timeout(),
+                    packet[:3],
+                    socket.timeout(),
+                    packet[3:7],
+                    packet[7:],
+                ]
+
+            def recv(self, size):
+                chunk = self.chunks.pop(0)
+                if isinstance(chunk, BaseException):
+                    raise chunk
+                return chunk
+
+        reader = ControlFrameReader(Socket())
+        self.assertEqual(reader.next_body(), body)
 
     def test_sample_callback_does_not_require_manual_unref(self):
         class Buffer:
