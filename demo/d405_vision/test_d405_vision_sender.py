@@ -15,6 +15,7 @@ from d405_vision_sender import (
     ControlFrameReader,
     FRAME_HEADER,
     StreamSession,
+    annex_b_nal_types,
     build_pipeline,
     encode_command,
     parse_ipv4_addresses,
@@ -83,6 +84,16 @@ class D405VisionSenderTest(unittest.TestCase):
         reader = ControlFrameReader(Socket())
         self.assertEqual(reader.next_body(), body)
 
+    def test_annex_b_nal_type_diagnostics(self):
+        self.assertEqual(
+            annex_b_nal_types(
+                b"\x00\x00\x00\x01\x67sps"
+                b"\x00\x00\x00\x01\x68pps"
+                b"\x00\x00\x01\x65idr"
+            ),
+            [7, 8, 5],
+        )
+
     def test_sample_callback_does_not_require_manual_unref(self):
         class Buffer:
             def map(self, flags):
@@ -138,6 +149,9 @@ class D405VisionSenderTest(unittest.TestCase):
         self.assertIn("sink_1::xpos=1280", pipeline)
         self.assertIn("width=2560,height=720", pipeline)
         self.assertIn("tune=zerolatency", pipeline)
+        self.assertIn("aud=true", pipeline)
+        self.assertIn("profile=baseline", pipeline)
+        self.assertIn("config-interval=-1", pipeline)
 
     def test_test_source_uses_smpte_without_camera(self):
         pipeline = build_pipeline(
@@ -289,6 +303,14 @@ class D405VisionSenderTest(unittest.TestCase):
         )
         self.assertIn('- name: "REALSENSE_D405"', profile)
         self.assertIn('camera: "ZED"', profile)
+        self.assertIn(
+            'name: "visibleRatio"\n      type: "float"\n      value: 0.46747',
+            profile,
+        )
+        self.assertIn(
+            'name: "contentRatio"\n      type: "float"\n      value: 1.58458',
+            profile,
+        )
         self.assertIn('name: "CamWidth"\n      type: "int"\n      value: 2560', profile)
         self.assertIn('name: "CamHeight"\n      type: "int"\n      value: 720', profile)
 

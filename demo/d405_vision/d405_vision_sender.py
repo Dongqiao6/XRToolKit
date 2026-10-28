@@ -111,6 +111,25 @@ def parse_command_body(body):
     return command, body[data_offset:data_offset + data_length]
 
 
+def annex_b_nal_types(payload):
+    """Return H.264 NAL unit types from an Annex-B byte stream."""
+    types = []
+    offset = 0
+    size = len(payload)
+    while offset + 4 <= size:
+        if payload[offset:offset + 4] == b"\x00\x00\x00\x01":
+            header = offset + 4
+        elif payload[offset:offset + 3] == b"\x00\x00\x01":
+            header = offset + 3
+        else:
+            offset += 1
+            continue
+        if header < size:
+            types.append(payload[header] & 0x1F)
+        offset = header + 1
+    return types
+
+
 def parse_camera_request(data):
     if len(data) < 10 or data[:2] != CAMERA_MAGIC or data[2] != 1:
         raise ValueError("invalid camera request header")
@@ -145,7 +164,7 @@ def parse_camera_request(data):
 
 def available_encoder(preferred="auto"):
     candidates = (
-        ["x264enc", "openh264enc", "v4l2h264enc", "nvv4l2h264enc"]
+        ["nvv4l2h264enc", "v4l2h264enc", "openh264enc", "x264enc"]
         if preferred == "auto"
         else [preferred]
     )
@@ -207,8 +226,8 @@ def _encoder_clause(encoder, bitrate_bps):
     if encoder == "x264enc":
         return (
             f"x264enc tune=zerolatency speed-preset=ultrafast "
-            f"bitrate={bitrate_kbps} key-int-max=30 bframes=0 "
-            f"rc-lookahead=0 sync-lookahead=0 byte-stream=true"
+            f"bitrate={bitrate_kbps} key-int-max=15 bframes=0 "
+            f"rc-lookahead=0 sync-lookahead=0 byte-stream=true aud=true"
         )
     if encoder == "openh264enc":
         return (
@@ -223,7 +242,7 @@ def _encoder_clause(encoder, bitrate_bps):
     if encoder == "nvv4l2h264enc":
         return (
             "nvv4l2h264enc maxperf-enable=1 insert-sps-pps=true "
-            f"idrinterval=30 bitrate={bitrate_bps}"
+            f"idrinterval=15 bitrate={bitrate_bps}"
         )
     raise ValueError(f"unsupported encoder: {encoder}")
 
@@ -297,6 +316,14 @@ def build_pipeline(
     else:
         encoder_prefix = "videoconvert"
 
+    if encoder == "x264enc":
+        h264_caps = (
+            "video/x-h264,stream-format=byte-stream,alignment=au,"
+            "profile=baseline"
+        )
+    else:
+        h264_caps = "video/x-h264,stream-format=byte-stream,alignment=au"
+
     return (
         f"{source} ! tee name=src "
         "src. ! queue max-size-buffers=1 leaky=downstream ! comp.sink_0 "
@@ -309,8 +336,8 @@ def build_pipeline(
         f"! video/x-raw,width={output_width},height={output_height},"
         f"framerate={fps}/1 ! {encoder_prefix} ! "
         f"{_encoder_clause(encoder, bitrate)} "
-        "! video/x-h264,stream-format=byte-stream,alignment=au "
-        "! h264parse config-interval=1 "
+        f"! {h264_caps} "
+        "! h264parse config-interval=-1 "
         "! appsink name=sink emit-signals=true sync=false "
         "max-buffers=1 drop=true"
     )
@@ -386,6 +413,12 @@ class StreamSession:
                     len(payload),
                 )
                 self._last_log_time = now
+            if self._sent_frames == 1:
+                LOG.info(
+                    "First H.264 access unit NAL types: %s "
+                    "(SPS=7, PPS=8, IDR=5)",
+                    annex_b_nal_types(payload),
+                )
         except (BrokenPipeError, ConnectionError, OSError) as exc:
             LOG.warning("Video TCP connection lost: %s", exc)
             self._stopping.set()

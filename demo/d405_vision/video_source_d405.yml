@@ -9,10 +9,10 @@
   properties:
     - name: "visibleRatio"
       type: "float"
-      value: 0.439464
+      value: 0.46747
     - name: "contentRatio"
       type: "float"
-      value: 1.704850
+      value: 1.58458
     - name: "heightCompressionFactor"
       type: "float"
       value: 1.777778

@@ -574,6 +574,19 @@ D405 是单目 RGB 相机，而当前 APK 的平面 Remote Vision 使用左右�
 `REALSENSE_D405` 只是 Remote Vision 中显示和选择的名字。发送端日志会显示实际请求
 类型，不需要把 `camera` 改成 `REALSENSE_D405`。
 
+`video_source_d405.yml` 的 shader 参数已与 Quest 专用
+`XRoboToolkit-Unity-Client-Quest` 的双目 `ZEDMINI` 配置对齐：
+`visibleRatio=0.46747`、`contentRatio=1.58458`。不要继续使用通用 Unity Client 中的
+`0.439464/1.704850` 参数。
+
+H.264 发送参数也已按 Quest 端 Android MediaCodec 兼容路径调整：
+
+- `--encoder auto` 依次选择 `nvv4l2h264enc`、`v4l2h264enc`、`openh264enc`、`x264enc`。
+- x264 使用 Baseline profile、`aud=true`，减少 Quest 硬件解码器兼容问题。
+- 每 15 帧强制一个 IDR，且 `h264parse config-interval=-1` 在每个关键帧前携带 SPS/PPS。
+- 视频 TCP 仍使用 4 字节大端长度前缀和 Annex-B H.264，与 Quest 插件
+  `RobotVisionUnityPluginQuest` 完全一致。
+
 ### D405 设备节点
 
 JAKA 主机连接多个摄像头时，不能把 `/dev/video0` 当成固定彩色节点。本次现场机器的
@@ -642,7 +655,11 @@ Control command: OPEN_CAMERA ...
 OPEN_CAMERA request: camera=ZED target=192.168.x.x:12345 ...
 Streaming D405 to 192.168.x.x:12345
 Video sent: frames=1 bytes=... last_frame=... bytes
+First H.264 access unit NAL types: [9, 7, 8, 5] (AUD=9, SPS=7, PPS=8, IDR=5)
 ```
+
+NAL 列表中必须包含 `7, 8, 5`；启用 AUD 时通常是 `[9, 7, 8, 5]`。若没有 7/8，
+MediaCodec 通常无法开始解码。
 
 ### D405 失败定位
 
@@ -655,7 +672,7 @@ Video sent: frames=1 bytes=... last_frame=... bytes
 - 有 `OPEN_CAMERA` 但没有 `Streaming D405`：发送端选择了错误的 V4L2 节点或 GStreamer
   协商失败，运行 `./run_d405_vision.zsh --list-devices` 和 `--check`。
 - 有持续更新的 `Video sent: frames=...` 但 Quest 仍是绿色：网络和相机发送已经正常，
-  问题位于 APK 的 H.264 解码/显示路径。先运行下面的测试画面定位。
+  检查 NAL 类型是否包含 `7, 8, 5`，然后按下面的顺序继续定位。
 
 如果只出现一次 `Video sent: frames=1`，随后连续打印：
 
@@ -697,6 +714,50 @@ cd "$HOME/Documents/dj_main/XRToolKit/demo"
 ```
 
 修复后不会再因空闲 3 秒触发 `Control session ended: timed out`，`frames` 应持续增加。
+
+### 更新 D405 配置和编码后重新验证
+
+本次同时修改了 `video_source_d405.yml` 和发送端编码参数，因此必须按以下顺序重新验证。
+D405 Python 是直接运行脚本，不需要 colcon 编译。
+
+1. 停止当前 D405 终端。
+2. 重新写入 Quest 配置：
+
+```zsh
+cd "$HOME/Documents/dj_main/XRToolKit/demo"
+./setup_d405_profile.zsh
+```
+
+3. 检查实际选中的编码器和管线：
+
+```zsh
+./run_d405_vision.zsh --check
+```
+
+Jetson/Orin 优先应显示 `encoder: nvv4l2h264enc`；没有 NVIDIA 编码器时会回退到
+`v4l2h264enc`、`openh264enc` 或 `x264enc`。
+
+4. 启动发送端：
+
+```zsh
+./run_d405_vision.zsh
+```
+
+5. Quest 先选择自定义的 `REALSENSE_D405`。若仍是绿色，停止 Listen，改选 APK 内置的
+`ZEDMINI`。两者发送的都是同一幅 D405 画面，`ZEDMINI` 用于排除自定义 YAML 参数问题。
+
+如果日志已有持续更新的帧和 `7/8/5` NAL、但两种视频源都是绿色，则主机侧发送已经
+确认正常。Quest 官方工程记录了一个相关已知问题：从 Oculus XR Plugin 切换到 OpenXR
+后，网络和 MediaCodec 解码仍工作，但 Unity 纹理不更新。若 logcat 出现
+`MediaCodec created and started successfully` 和 `OES texture updated`，却没有画面，
+需要重新检查 APK 的 XR Plugin 构建配置，不能再通过修改 JAKA 或 D405 发送端解决。
+
+本项目 D405 兼容实现依据以下官方工程：
+
+- Quest 客户端：<https://github.com/XR-Robotics/XRoboToolkit-Unity-Client-Quest>
+- Quest 视频插件：<https://github.com/XR-Robotics/RobotVisionUnityPluginQuest>
+- PC/Orin 发送端：<https://github.com/XR-Robotics/XRoboToolkit-Orin-Video-Sender>
+- Quest 默认视频源：<https://github.com/XR-Robotics/XRoboToolkit-Unity-Client-Quest/blob/main/Assets/StreamingAssets/video_source.yml>
 
 不打开 D405，只发送标准测试画面：
 
