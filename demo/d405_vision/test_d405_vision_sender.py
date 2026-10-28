@@ -13,6 +13,7 @@ from d405_vision_sender import (
     CameraRequest,
     build_pipeline,
     encode_command,
+    parse_ipv4_addresses,
     parse_camera_request,
     parse_command_body,
 )
@@ -75,6 +76,23 @@ class D405VisionSenderTest(unittest.TestCase):
         self.assertIn("width=2560,height=720", pipeline)
         self.assertIn("tune=zerolatency", pipeline)
 
+    def test_test_source_uses_smpte_without_camera(self):
+        pipeline = build_pipeline(
+            device="auto",
+            test_source=True,
+            capture_format="AUTO",
+            source_width=1280,
+            source_height=720,
+            fps=30,
+            output_width=2560,
+            output_height=720,
+            bitrate=4000000,
+            encoder="x264enc",
+        )
+        self.assertIn("videotestsrc", pipeline)
+        self.assertIn("pattern=smpte", pipeline)
+        self.assertNotIn("v4l2src", pipeline)
+
     def test_mjpeg_capture_uses_decoder(self):
         pipeline = build_pipeline(
             device="/dev/video0",
@@ -105,6 +123,16 @@ class D405VisionSenderTest(unittest.TestCase):
             encoder="x264enc",
         )
         self.assertIn("format=UYVY,width=1280,height=720", pipeline)
+
+    def test_ipv4_address_diagnostics(self):
+        addresses = parse_ipv4_addresses(
+            "2: eth0    inet 192.168.71.10/24 brd 192.168.71.255 scope global eth0\n"
+            "3: wlan0   inet 192.168.1.20/24 brd 192.168.1.255 scope global wlan0\n"
+        )
+        self.assertEqual(
+            addresses,
+            [("eth0", "192.168.71.10"), ("wlan0", "192.168.1.20")],
+        )
 
     def test_formats_ext_separates_depth_and_color(self):
         formats = parse_formats_ext(
@@ -197,7 +225,7 @@ class D405VisionSenderTest(unittest.TestCase):
             encoding="utf-8"
         )
         self.assertIn('- name: "REALSENSE_D405"', profile)
-        self.assertIn('camera: "REALSENSE_D405"', profile)
+        self.assertIn('camera: "ZED"', profile)
         self.assertIn('name: "CamWidth"\n      type: "int"\n      value: 2560', profile)
         self.assertIn('name: "CamHeight"\n      type: "int"\n      value: 720', profile)
 

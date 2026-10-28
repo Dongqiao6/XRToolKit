@@ -499,6 +499,9 @@ cd "$HOME/Documents/dj_main/XRToolKit/demo"
 ./setup_d405_profile.zsh
 ```
 
+`video_source_d405.yml` 修改后必须重新执行 `./setup_d405_profile.zsh`，否则 Quest
+仍会使用 APK 数据目录中的旧配置。
+
 自动识别 D405 的彩色节点并实际协商视频管线：
 
 ```zsh
@@ -513,8 +516,9 @@ cd "$HOME/Documents/dj_main/XRToolKit/demo"
 ./run_d405_vision.zsh
 ```
 
-最后在 Quest 中打开 Remote Vision，选择 `REALSENSE_D405`，点击 `Listen`，输入 JAKA
-主机 IP 并点击 `Confirm`。
+最后在 Quest 中打开 Remote Vision，选择 `REALSENSE_D405`，点击 `Listen`，输入运行
+`run_d405_vision.zsh` 的 JAKA **主机** IP 并点击 `Confirm`。不能填写 JAKA 控制器
+`192.168.71.36/37`、底盘 `192.168.71.50`，也不能填写 Quest 自己的 IP。
 
 ### 1. 安装视频依赖
 
@@ -590,6 +594,10 @@ REALSENSE_D405
 
 如果该选项没有出现，可以继续选择原来的 `ZEDMINI`，发送端也兼容该类型。
 
+`REALSENSE_D405` 的 `camera` 类型在配置中保持为官方发送端和 APK 已验证的 `ZED`；
+`REALSENSE_D405` 只是 Remote Vision 中显示和选择的名字。发送端日志会显示实际请求
+类型，不需要把 `camera` 改成 `REALSENSE_D405`。
+
 ### 4. 启动 D405 发送端
 
 在 JAKA 主机上另开终端：
@@ -603,12 +611,56 @@ cd "$HOME/Documents/dj_main/XRToolKit/demo"
 
 ```text
 Selected /dev/video2 (...), capture=YUY2
+In Quest Remote Vision, enter JAKA host IP 192.168.1.20 (...)
+Host IPv4 addresses: eth0=192.168.71.10, wlan0=192.168.1.20
 Waiting for Quest Remote Vision on 0.0.0.0:13579
 ```
 
-Quest 点击 Confirm 后还应出现 `OPEN_CAMERA` 和 `Streaming D405 ...`。如果再次出现
-`not-negotiated`，先运行 `./run_d405_vision.zsh --list-devices`，不要把深度节点作为
-`--device` 参数。
+优先填写上面 `In Quest Remote Vision, enter JAKA host IP` 给出的地址。多网卡机器不能
+直接凭网卡名称猜，JAKA 控制网段的 `192.168.71.x` 通常无法被 Quest 访问。
+
+Quest 点击 Confirm 后，发送端必须依次出现：
+
+```text
+Remote Vision control connected ...
+Control command: OPEN_CAMERA ...
+OPEN_CAMERA request: camera=ZED target=192.168.x.x:12345 ...
+Streaming D405 to 192.168.x.x:12345
+Video sent: frames=1 bytes=... last_frame=... bytes
+```
+
+排查时按最后出现的日志判断：
+
+- 没有 `Remote Vision control connected`：Quest 中填错主机 IP，或者 TCP `13579` 被防火墙
+  阻止。
+- 有连接但没有 `OPEN_CAMERA`：APK 与视频源配置不匹配，重新运行
+  `./setup_d405_profile.zsh` 后重启 APK。
+- 有 `OPEN_CAMERA` 但没有 `Streaming D405`：发送端选择了错误的 V4L2 节点或 GStreamer
+  协商失败，运行 `./run_d405_vision.zsh --list-devices` 和 `--check`。
+- 有持续更新的 `Video sent: frames=...` 但 Quest 仍是绿色：网络和相机发送已经正常，
+  问题位于 APK 的 H.264 解码/显示路径。先运行下面的测试画面定位。
+
+不打开 D405，只发送标准测试画面：
+
+```zsh
+cd "$HOME/Documents/dj_main/XRToolKit/demo"
+./run_d405_vision.zsh --test-source
+```
+
+测试画面能显示而 D405 不能显示时，问题在相机采集/编码参数；两者都是绿色时，检查
+Quest IP 输入、Remote Vision 配置或更换 `ZEDMINI` 项。不要继续反复修改 JAKA 遥操作
+代码，因为视频链路与机械臂控制相互独立。
+
+需要确认 APK 解码状态时，在 JAKA 主机另开终端：
+
+```zsh
+adb logcat -c
+adb logcat | grep -E "MediaDecoder|MediaCodec|RemoteCamera|StartListen|OPEN_CAMERA"
+```
+
+正常应看到 `MediaDecoder server started on port 12345` 和
+`MediaCodec ... started successfully`；若只看到 `MediaCodec not ready` 或
+`Failed to create MediaCodec decoder`，应保存这段日志后再调整编码参数。
 
 如果 CPU 负载较高或 Wi-Fi 延迟大，可降到 `848x480@30` 采集并按需降低码率：
 
@@ -630,7 +682,7 @@ Jetson/Orin 主机如已安装 NVIDIA GStreamer 编码器，可尝试：
 
 1. 保持 PC-service 和遥操作正常运行。
 2. 在 Quest 的 Remote Vision 中选择 `REALSENSE_D405`。
-3. 点击 Listen，输入 JAKA 主机 IP。
+3. 点击 Listen，输入发送端终端打印的 `In Quest Remote Vision, enter JAKA host IP`。
 4. 点击 Confirm。
 
 视频窗口固定在头显前方，因此移动或转头时始终显示 D405 的全局视角。D405 安装方向

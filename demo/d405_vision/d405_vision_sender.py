@@ -8,9 +8,11 @@ import os
 import re
 import socket
 import struct
+import subprocess
 import sys
 import threading
 import time
+from pathlib import Path
 
 from device_discovery import (
     discover_video_devices,
@@ -132,6 +134,50 @@ def available_encoder(preferred="auto"):
         "No H.264 GStreamer encoder found. Install gstreamer1.0-plugins-ugly "
         "(x264enc) or choose an installed encoder."
     )
+
+
+def parse_ipv4_addresses(output):
+    """Return ``(interface, address)`` pairs from ``ip -4 -o addr`` output."""
+    addresses = []
+    for line in output.splitlines():
+        fields = line.split()
+        if "inet" not in fields:
+            continue
+        inet_index = fields.index("inet")
+        if inet_index == 0 or inet_index + 1 >= len(fields):
+            continue
+        address = fields[inet_index + 1].split("/", 1)[0]
+        addresses.append((fields[inet_index - 1], address))
+    return addresses
+
+
+def local_ipv4_addresses():
+    try:
+        result = subprocess.run(
+            ["ip", "-4", "-o", "addr", "show", "scope", "global"],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=3,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return []
+    return parse_ipv4_addresses(result.stdout)
+
+
+def source_ip_for_remote(remote_ip):
+    if not remote_ip:
+        return None
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as probe:
+            probe.connect((remote_ip, CONTROL_PORT))
+            return probe.getsockname()[0]
+    except OSError:
+        return None
+
+
+def quest_ip_path():
+    return Path(__file__).resolve().parent.parent / ".quest_ip"
 
 
 def _encoder_clause(encoder, bitrate_bps):
@@ -259,6 +305,9 @@ class StreamSession:
         self._stopping = threading.Event()
         self._closed = threading.Event()
         self._monitor = None
+        self._sent_frames = 0
+        self._sent_bytes = 0
+        self._last_log_time = 0.0
 
     def start(self):
         sock = socket.create_connection(
@@ -304,6 +353,17 @@ class StreamSession:
             if not payload or self._send_socket is None:
                 return Gst.FlowReturn.OK
             self._send_socket.sendall(FRAME_HEADER.pack(len(payload)) + payload)
+            self._sent_frames += 1
+            self._sent_bytes += len(payload)
+            now = time.monotonic()
+            if self._sent_frames == 1 or now - self._last_log_time >= 5.0:
+                LOG.info(
+                    "Video sent: frames=%d bytes=%d last_frame=%d bytes",
+                    self._sent_frames,
+                    self._sent_bytes,
+                    len(payload),
+                )
+                self._last_log_time = now
         except (BrokenPipeError, ConnectionError, OSError) as exc:
             LOG.warning("Video TCP connection lost: %s", exc)
             self._stopping.set()
@@ -347,7 +407,11 @@ class StreamSession:
             and threading.current_thread() is not self._monitor
         ):
             self._monitor.join(timeout=1.0)
-        LOG.info("D405 stream stopped")
+        LOG.info(
+            "D405 stream stopped (frames=%d, bytes=%d)",
+            self._sent_frames,
+            self._sent_bytes,
+        )
 
 
 class SenderServer:
@@ -363,6 +427,19 @@ class SenderServer:
             )
         if not request.ip or request.port <= 0:
             raise ValueError("camera request has no valid headset TCP target")
+        LOG.info(
+            "OPEN_CAMERA request: camera=%s target=%s:%d video=%dx%d fps=%d "
+            "bitrate=%d hevc=%d render_mode=%d",
+            request.camera,
+            request.ip,
+            request.port,
+            request.width,
+            request.height,
+            request.fps,
+            request.bitrate,
+            request.enable_hevc,
+            request.render_mode,
+        )
         self.stop_stream()
 
         encoder = available_encoder(self.args.encoder)
@@ -404,12 +481,12 @@ class SenderServer:
             self.session = None
 
     def preflight(self):
-        if self.args.test_source:
-            return
-        try:
-            resolve_capture_source(self.args, quiet=False)
-        except Exception as exc:
-            raise RuntimeError("D405 camera preflight failed: %s" % exc) from exc
+        if not self.args.test_source:
+            try:
+                resolve_capture_source(self.args, quiet=False)
+            except Exception as exc:
+                raise RuntimeError("D405 camera preflight failed: %s" % exc) from exc
+        log_network_hint()
 
     def _handle_client(self, client):
         client.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
@@ -536,6 +613,43 @@ def resolve_capture_source(args, quiet=False):
             capture_format,
         )
     return device, capture_format
+
+
+def log_network_hint():
+    addresses = local_ipv4_addresses()
+    if not addresses:
+        LOG.warning(
+            "Cannot list local IPv4 addresses; run 'hostname -I' and enter the "
+            "JAKA host address reachable from Quest."
+        )
+        return
+
+    quest_ip = ""
+    try:
+        quest_ip = quest_ip_path().read_text(encoding="utf-8").strip()
+    except OSError:
+        pass
+
+    recommended = source_ip_for_remote(quest_ip)
+    if recommended is None and len(addresses) == 1:
+        recommended = addresses[0][1]
+    if recommended is not None:
+        LOG.info(
+            "In Quest Remote Vision, enter JAKA host IP %s "
+            "(not the JAKA controller 192.168.71.x and not the Quest IP)",
+            recommended,
+        )
+    else:
+        LOG.warning(
+            "Multiple host IPv4 addresses found; enter the one on Quest's LAN "
+            "in Remote Vision."
+        )
+    LOG.info(
+        "Host IPv4 addresses: %s",
+        ", ".join("%s=%s" % item for item in addresses),
+    )
+    if quest_ip:
+        LOG.info("Last detected Quest IP: %s", quest_ip)
 
 
 def validate_pipeline(description):
