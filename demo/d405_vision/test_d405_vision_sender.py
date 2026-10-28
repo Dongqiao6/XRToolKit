@@ -11,6 +11,8 @@ from device_discovery import (
 )
 from d405_vision_sender import (
     CameraRequest,
+    FRAME_HEADER,
+    StreamSession,
     build_pipeline,
     encode_command,
     parse_ipv4_addresses,
@@ -55,6 +57,42 @@ class D405VisionSenderTest(unittest.TestCase):
             "REALSENSE_D405", "192.168.1.20",
         )
         self.assertEqual(parse_camera_request(camera_request_data(request)), request)
+
+    def test_sample_callback_does_not_require_manual_unref(self):
+        class Buffer:
+            def map(self, flags):
+                return True, type("Mapped", (), {"data": b"h264-frame"})()
+
+            def unmap(self, mapped):
+                pass
+
+        class Sample:
+            # PyGObject manages the Gst.Sample reference; it intentionally does
+            # not expose unref().
+            def get_buffer(self):
+                return Buffer()
+
+        class Sink:
+            def emit(self, signal):
+                self.signal = signal
+                return Sample()
+
+        class Socket:
+            def __init__(self):
+                self.payload = b""
+
+            def sendall(self, payload):
+                self.payload += payload
+
+        sender = StreamSession(None, "127.0.0.1", 12345)
+        sender._send_socket = Socket()
+        result = sender._on_new_sample(Sink())
+        self.assertEqual(
+            sender._send_socket.payload,
+            FRAME_HEADER.pack(len(b"h264-frame")) + b"h264-frame",
+        )
+        self.assertEqual(sender._sent_frames, 1)
+        self.assertEqual(result, 0)
 
     def test_pipeline_duplicates_mono_view(self):
         pipeline = build_pipeline(

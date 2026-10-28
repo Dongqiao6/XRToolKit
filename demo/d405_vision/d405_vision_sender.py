@@ -368,8 +368,6 @@ class StreamSession:
             LOG.warning("Video TCP connection lost: %s", exc)
             self._stopping.set()
             return Gst.FlowReturn.EOS
-        finally:
-            sample.unref()
         return Gst.FlowReturn.OK
 
     def _monitor_loop(self):

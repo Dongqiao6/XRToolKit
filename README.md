@@ -40,6 +40,11 @@ cd "$HOME/Documents/dj_main/XRToolKit/demo"
 source "$HOME/Documents/dj_main/XRToolKit/demo/setup.zsh"
 ```
 
+`d405_vision/` 下的 Python 发送端是由 `run_d405_vision.zsh` 直接运行的脚本，单独修改
+D405 脚本时不需要 colcon 编译，停止终端 C 后重新执行 `./run_d405_vision.zsh` 即可。
+如果同一次更新还包含 `src/` 下的 ROS 节点、Python bridge 或配置，仍必须执行上面的
+`./build.zsh`。
+
 ### 0. 首次安装或代码更新后执行
 
 只有第一次部署、代码或依赖发生变化时需要执行：
@@ -651,6 +656,22 @@ Video sent: frames=1 bytes=... last_frame=... bytes
   协商失败，运行 `./run_d405_vision.zsh --list-devices` 和 `--check`。
 - 有持续更新的 `Video sent: frames=...` 但 Quest 仍是绿色：网络和相机发送已经正常，
   问题位于 APK 的 H.264 解码/显示路径。先运行下面的测试画面定位。
+
+如果只出现一次 `Video sent: frames=1`，随后连续打印：
+
+```text
+AttributeError: 'Sample' object has no attribute 'unref'
+```
+
+说明运行的是修复前的发送端。PyGObject 会自动管理 `Gst.Sample` 的生命周期，旧代码却
+在每帧结束时手工调用 `sample.unref()`，导致第一帧之后的所有回调都异常退出。该调用
+已经删除；更新代码后停止并重新启动 D405 即可，不需要重新执行
+`setup_d405_profile.zsh`。修复后应持续看到：
+
+```text
+Video sent: frames=30 bytes=... last_frame=... bytes
+Video sent: frames=150 bytes=... last_frame=... bytes
+```
 
 不打开 D405，只发送标准测试画面：
 
