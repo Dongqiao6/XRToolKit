@@ -1,6 +1,7 @@
 import launch
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription
+from launch.conditions import IfCondition
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration, PathJoinSubstitution
 from launch_ros.substitutions import FindPackageShare
@@ -102,6 +103,12 @@ def generate_launch_description():
     xrt_grip_threshold_arg = DeclareLaunchArgument(
         'xrt_grip_threshold', default_value='0.5',
         description='Threshold used for the digital LG/RG and LTr/RTr Joy buttons')
+    start_amr_arg = DeclareLaunchArgument(
+        'start_amr', default_value='false',
+        description='true = also start the AMR chassis controller')
+    connect_ip_arg = DeclareLaunchArgument(
+        'connect_ip', default_value='192.168.71.50',
+        description='AMR controller IP; used only when start_amr:=true')
 
     # The XRoboToolkit bridge publishes the same topics that quest_reader used,
     # so the JAKA and AMR consumers remain unchanged.
@@ -151,6 +158,15 @@ def generate_launch_description():
             'debug': LaunchConfiguration('debug'),
         }.items(),
     )
+    amr_control_launch = IncludeLaunchDescription(
+        PythonLaunchDescriptionSource([
+            PathJoinSubstitution([FindPackageShare('sr_amr_control'), 'launch', 'amr_control.launch.py'])
+        ]),
+        condition=IfCondition(LaunchConfiguration('start_amr')),
+        launch_arguments={
+            'connect_ip': LaunchConfiguration('connect_ip'),
+        }.items(),
+    )
 
     return LaunchDescription([
         robot_left_ip_arg,
@@ -185,6 +201,9 @@ def generate_launch_description():
         xrt_publish_rate_arg,
         xrt_smooth_alpha_arg,
         xrt_grip_threshold_arg,
+        start_amr_arg,
+        connect_ip_arg,
         xrt_bridge_launch,
         rc_ctrl_launch,
+        amr_control_launch,
     ])

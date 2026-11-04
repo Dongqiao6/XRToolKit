@@ -16,6 +16,19 @@ typeset _quest_apk="${_quest_repo_dir}/XRoboToolkit-Quest-1.0.1.apk"
 typeset _quest_ip_file="${_quest_demo_dir}/.quest_ip"
 typeset _quest_ip="${QUEST_IP:-}"
 
+_quest_wireless_ready() {
+  adb -s "$1" get-state 2>/dev/null | grep -qx "device"
+}
+
+_quest_usb_connected() {
+  adb devices 2>/dev/null |
+    awk -v serial="$1" '$1 == serial && $2 == "device" {found = 1} END {exit !found}'
+}
+
+_quest_apk_running() {
+  adb -s "$1" shell pidof "${_quest_package}" >/dev/null 2>&1
+}
+
 if ! command -v adb >/dev/null 2>&1; then
   print -u2 "找不到 adb。Quest 仍可手动打开 APK，但无法自动启动。"
   exit 1
@@ -35,6 +48,15 @@ _quest_devices=("${(@f)$(adb devices | awk '$2 == "device" {print $1}')}")
 typeset _quest_serial=""
 typeset _quest_device
 typeset _quest_detected_ip=""
+typeset _quest_usb_serial=""
+typeset _quest_wireless_serial=""
+
+for _quest_device in "${_quest_devices[@]}"; do
+  if [[ "${_quest_device}" != *:* ]]; then
+    _quest_usb_serial="${_quest_device}"
+    break
+  fi
+done
 
 # 优先使用已经建立的无线连接，其次使用 USB。
 for _quest_device in "${_quest_devices[@]}"; do
@@ -81,10 +103,11 @@ if [[ -z "${_quest_serial}" && -n "${_quest_ip}" ]]; then
 fi
 
 if [[ -z "${_quest_serial}" ]] || \
-   ! adb -s "${_quest_serial}" get-state >/dev/null 2>&1; then
+   { [[ "${_quest_serial}" == *:* ]] && ! _quest_wireless_ready "${_quest_serial}"; } || \
+   { [[ "${_quest_serial}" != *:* ]] && ! _quest_usb_connected "${_quest_serial}"; }; then
   print -u2 "未找到可用的 Quest adb 设备。"
   print -u2 "请先用 USB 连接 Quest，或在运行前设置 QUEST_IP=<Quest IP>。"
-  print -u2 "本次仍会启动遥操作；你也可以在头显中手动打开 XRoboToolkit。"
+  print -u2 "Quest 未就绪，遥操作不会启动。"
   exit 1
 fi
 
@@ -97,6 +120,10 @@ if [[ "${_quest_serial}" != *:* ]]; then
   if [[ -n "${_quest_detected_ip}" ]]; then
     print -r -- "${_quest_detected_ip}" > "${_quest_ip_file}"
   fi
+fi
+
+if [[ "${_quest_serial}" == *:* ]]; then
+  _quest_wireless_serial="${_quest_serial}"
 fi
 
 if ! adb -s "${_quest_serial}" shell pm path "${_quest_package}" >/dev/null 2>&1; then
@@ -116,12 +143,92 @@ adb -s "${_quest_serial}" shell monkey \
     exit 1
   }
 
-# 首次 USB 运行时建立无线 adb，后续可拔掉 USB。
-if [[ "${_quest_serial}" != *:* && -n "${_quest_detected_ip}" ]]; then
-  adb -s "${_quest_serial}" tcpip "${_quest_port}" >/dev/null 2>&1 || true
-  sleep 1
-  adb connect "${_quest_detected_ip}:${_quest_port}" >/dev/null 2>&1 || true
+typeset _quest_app_ready=""
+for _quest_try in {1..10}; do
+  if _quest_apk_running "${_quest_serial}"; then
+    _quest_app_ready="yes"
+    break
+  fi
+  sleep 0.5
+done
+if [[ -z "${_quest_app_ready}" ]]; then
+  print -u2 "XRoboToolkit 进程未成功运行，遥操作不会启动。"
+  exit 1
 fi
 
-print "XRoboToolkit APK 已启动；请在头显中确认 Tracking 和 Send 已开启。"
+# USB 模式下先建立无线 adb，再等待用户拔掉数据线。
+typeset _quest_connect_ip="${_quest_detected_ip:-${_quest_ip}}"
+if [[ -z "${_quest_wireless_serial}" && "${_quest_serial}" != *:* ]]; then
+  if [[ -z "${_quest_connect_ip}" ]]; then
+    print -u2 "无法读取 Quest IP，不能建立无线 adb，遥操作不会启动。"
+    exit 1
+  fi
+  adb -s "${_quest_serial}" tcpip "${_quest_port}" >/dev/null 2>&1 || {
+    print -u2 "无法开启 Quest 无线 adb，遥操作不会启动。"
+    exit 1
+  }
+  sleep 1
+  _quest_wireless_serial="${_quest_connect_ip}:${_quest_port}"
+  adb connect "${_quest_wireless_serial}" >/dev/null 2>&1 || true
+fi
+
+typeset _quest_wireless_ready_flag=""
+for _quest_try in {1..15}; do
+  if _quest_wireless_ready "${_quest_wireless_serial}"; then
+    _quest_wireless_ready_flag="yes"
+    break
+  fi
+  sleep 1
+done
+if [[ -z "${_quest_wireless_ready_flag}" ]]; then
+  print -u2 "Quest 无线 adb 连接失败，遥操作不会启动。"
+  exit 1
+fi
+
+if ! _quest_apk_running "${_quest_wireless_serial}"; then
+  print -u2 "无线连接后无法确认 XRoboToolkit 正在运行，遥操作不会启动。"
+  exit 1
+fi
+
+if [[ -n "${_quest_usb_serial}" ]]; then
+  print -u2 "================================================================"
+  print -u2 "XRoboToolkit 已启动，Quest 无线 adb 通信正常。"
+  print -u2 "请立即拔掉 JAKA 主机与 Quest 3 之间的 USB 数据线。"
+  print -u2 "拔掉后按 Enter，脚本会复检无线连接，然后才启动遥操作。"
+  print -u2 "================================================================"
+
+  typeset _quest_unplug_ack=""
+  while _quest_usb_connected "${_quest_usb_serial}"; do
+    if ! _quest_wireless_ready "${_quest_wireless_serial}"; then
+      adb connect "${_quest_wireless_serial}" >/dev/null 2>&1 || true
+      sleep 1
+      if ! _quest_wireless_ready "${_quest_wireless_serial}"; then
+        print -u2 "等待拔线时无线 adb 中断，遥操作不会启动。"
+        exit 1
+      fi
+    fi
+    print -u2 "请拔掉 USB 数据线后按 Enter 继续..."
+    read -r _quest_unplug_ack || true
+    sleep 1
+  done
+
+  _quest_wireless_ready_flag=""
+  for _quest_try in {1..10}; do
+    if _quest_wireless_ready "${_quest_wireless_serial}"; then
+      _quest_wireless_ready_flag="yes"
+      break
+    fi
+    sleep 1
+  done
+  if [[ -z "${_quest_wireless_ready_flag}" ]] || \
+     ! _quest_apk_running "${_quest_wireless_serial}"; then
+    print -u2 "USB 已断开，但无线连接或 XRoboToolkit 状态异常，遥操作不会启动。"
+    exit 1
+  fi
+  print "已确认 USB 数据线断开，无线连接和 XRoboToolkit 正常。"
+else
+  print "无线连接和 XRoboToolkit 正常，USB 数据线未连接。"
+fi
+
+print "现在开始遥操作；请在头显中确认 Tracking 和 Send 已开启。"
 exit 0

@@ -8,6 +8,9 @@
 #include <cmath>
 #include <memory>
 #include <mutex>
+#include <filesystem>
+#include <fstream>
+#include <iomanip>
 
 #include "rclcpp/rclcpp.hpp"
 #include "geometry_msgs/msg/pose_stamped.hpp"
@@ -102,6 +105,198 @@ bool enable_y_limit = true; // true = clamp arm TCP y to its workspace range
 bool arm_is_right = false;  // mirror of arm_name == "right"
 double arm_tcp_y_at_grip = 0.0; // arm's absolute TCP y captured at grip press (mm)
 bool arm_tcp_valid = false;     // whether the grip-time TCP read succeeded
+CartesianPose arm_tcp_at_grip_pose{}; // full TCP pose captured at grip press (mm)
+
+// Lightweight on-disk black box. Every servo_p call writes the commanded
+// increment, command point, sampled TCP, six joint angles, controller error
+// code and SDK return value. Recording is observational only: opening or
+// writing the file can never change the control path.
+std::ofstream blackbox;
+double blackbox_flush_time = 0.0;
+CartesianPose actual_tcp{};
+JointValue actual_joints{};
+bool feedback_valid = false;
+double last_feedback_us = 0.0;
+int last_errcode = 0;
+int feedback_source = 0;
+bool feedback_polling = false;
+int feedback_stride = 1;
+unsigned long feedback_tick = 0;
+bool status_polling = false;
+int status_stride = 13;
+unsigned long status_tick = 0;
+double last_cmd_x = 0.0;
+double last_cmd_y = 0.0;
+double last_cmd_z = 0.0;
+bool last_cmd_valid = false;
+
+double steady_seconds()
+{
+    return std::chrono::duration<double>(
+        std::chrono::steady_clock::now().time_since_epoch()).count();
+}
+
+void blackbox_header()
+{
+    blackbox << "t,kind,reason,incr_x,incr_y,incr_z,off_x,off_y,off_z,"
+                "cmd_x,cmd_y,cmd_z,act_x,act_y,act_z,fb_valid,j1,j2,j3,j4,j5,j6,"
+                "errcode,ret,held,fb_us\n";
+}
+
+void blackbox_line(const char *kind, const char *reason, const CartesianPose &incr,
+                   double ox, double oy, double oz,
+                   double cx, double cy, double cz, int ret, bool held)
+{
+    if (!blackbox.is_open())
+        return;
+    const double t = steady_seconds();
+    blackbox << t << ',' << kind << ',' << reason
+             << ',' << incr.tran.x << ',' << incr.tran.y << ',' << incr.tran.z
+             << ',' << ox << ',' << oy << ',' << oz
+             << ',' << cx << ',' << cy << ',' << cz
+             << ',' << actual_tcp.tran.x << ',' << actual_tcp.tran.y
+             << ',' << actual_tcp.tran.z << ',' << (feedback_valid ? 1 : 0);
+    for (int i = 0; i < 6; ++i)
+        blackbox << ',' << actual_joints.jVal[i];
+    blackbox << ',' << last_errcode << ',' << ret << ',' << (held ? 1 : 0)
+             << ',' << last_feedback_us << '\n';
+    if (t - blackbox_flush_time > 1.0)
+    {
+        blackbox.flush();
+        blackbox_flush_time = t;
+    }
+}
+
+template <class F>
+double measure_us(F call, int repeats)
+{
+    const auto t0 = std::chrono::steady_clock::now();
+    for (int i = 0; i < repeats; ++i)
+        call();
+    const auto dt = std::chrono::duration<double, std::micro>(
+        std::chrono::steady_clock::now() - t0).count();
+    return dt / static_cast<double>(repeats);
+}
+
+// Some controllers do not implement get_actual_*; others return everything in
+// get_robot_status. Measure both once and use the working, affordable source.
+void calibrate_blackbox_feedback()
+{
+    feedback_polling = false;
+    status_polling = false;
+    feedback_source = 0;
+    if (!blackbox.is_open() || !arm_ok)
+        return;
+
+    CartesianPose tcp{};
+    JointValue joints{};
+    RobotStatus status{};
+    RobotStatus_simple simple{};
+    const bool tcp_ok = (robot.get_actual_tcp_position(&tcp) == 0);
+    const bool joint_ok = (robot.get_actual_joint_position(&joints) == 0);
+    const bool status_ok = (robot.get_robot_status(&status) == 0);
+    const double tcp_us = measure_us([&]() {robot.get_actual_tcp_position(&tcp);}, 20);
+    const double joint_us = measure_us([&]() {robot.get_actual_joint_position(&joints);}, 20);
+    const double status_us = measure_us([&]() {robot.get_robot_status(&status);}, 10);
+    const double simple_us = measure_us([&]() {robot.get_robot_status_simple(&simple);}, 10);
+    const double pair_us = tcp_us + joint_us;
+
+    double motion_us = 0.0;
+    if (status_ok && (!tcp_ok || !joint_ok || status_us <= pair_us))
+    {
+        feedback_source = 2;
+        motion_us = status_us;
+    }
+    else if (tcp_ok && joint_ok)
+    {
+        feedback_source = 1;
+        motion_us = pair_us;
+    }
+
+    feedback_stride = std::max(1, std::min(8,
+        static_cast<int>(std::ceil(motion_us / 200.0))));
+    feedback_polling = feedback_source != 0 && motion_us <= 4000.0;
+    status_stride = std::max(13, std::min(200,
+        static_cast<int>(std::ceil(simple_us / 100.0))));
+    status_polling = simple_us <= 10000.0;
+
+    RCLCPP_INFO(rclcpp::get_logger("rc_ctrl"),
+                "[%s] black box feedback: status=%.0fus(ok=%d) actual=%.0fus(ok=%d) "
+                "joints=%.0fus(ok=%d) simple=%.0fus(ok=%d) source=%s every %d call(s)",
+                arm_name.c_str(), status_us, status_ok ? 1 : 0, tcp_us,
+                tcp_ok ? 1 : 0, joint_us, joint_ok ? 1 : 0, simple_us,
+                status_polling ? 1 : 0,
+                feedback_source == 2 ? "robot_status" :
+                    (feedback_source == 1 ? "actual_*" : "none"),
+                feedback_stride);
+    if (!feedback_polling)
+    {
+        RCLCPP_WARN(rclcpp::get_logger("rc_ctrl"),
+                    "[%s] black box cannot sample TCP/joints without delaying servo; "
+                    "commands and alarms will still be recorded",
+                    arm_name.c_str());
+    }
+}
+
+void poll_blackbox_feedback()
+{
+    if (!blackbox.is_open() || !arm_ok || rearming)
+        return;
+
+    if (feedback_polling &&
+        (++feedback_tick % static_cast<unsigned long>(feedback_stride) == 0))
+    {
+        const double t0 = steady_seconds();
+        if (feedback_source == 2)
+        {
+            RobotStatus status{};
+            if (robot.get_robot_status(&status) == 0)
+            {
+                actual_tcp.tran.x = status.cartesiantran_position[0];
+                actual_tcp.tran.y = status.cartesiantran_position[1];
+                actual_tcp.tran.z = status.cartesiantran_position[2];
+                actual_tcp.rpy.rx = status.cartesiantran_position[3];
+                actual_tcp.rpy.ry = status.cartesiantran_position[4];
+                actual_tcp.rpy.rz = status.cartesiantran_position[5];
+                for (int i = 0; i < 6; ++i)
+                    actual_joints.jVal[i] = status.joint_position[i];
+                feedback_valid = true;
+            }
+            else
+            {
+                feedback_valid = false;
+            }
+        }
+        else if (feedback_source == 1)
+        {
+            CartesianPose tcp{};
+            JointValue joints{};
+            const int ret_tcp = robot.get_actual_tcp_position(&tcp);
+            const int ret_joints = robot.get_actual_joint_position(&joints);
+            if (ret_tcp == 0)
+                actual_tcp = tcp;
+            if (ret_joints == 0)
+                actual_joints = joints;
+            feedback_valid = ret_tcp == 0 && ret_joints == 0;
+        }
+        last_feedback_us = (steady_seconds() - t0) * 1e6;
+    }
+
+    if (status_polling &&
+        (++status_tick % static_cast<unsigned long>(status_stride) == 0))
+    {
+        RobotStatus_simple simple{};
+        if (robot.get_robot_status_simple(&simple) == 0 &&
+            simple.errcode != last_errcode)
+        {
+            last_errcode = simple.errcode;
+            CartesianPose none{};
+            blackbox_line("event", last_errcode != 0 ? "alarm" : "alarm_cleared",
+                          none, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0, false);
+            blackbox.flush();
+        }
+    }
+}
 
 // Convert a PoseStamped (position in meters + quaternion) into a controller pose
 // (translation in mm + quaternion). No RPY conversion here — the RPY delta is
@@ -284,13 +479,45 @@ void servo_cartesian(JAKAZuRobot &robot,
         incr.tran.z *= s;
     }
 
+    poll_blackbox_feedback();
+    const double off_x = ctrl_now.tran.x - ctrl_origin.tran.x;
+    const double off_y = ctrl_now.tran.y - ctrl_origin.tran.y;
+    const double off_z = ctrl_now.tran.z - ctrl_origin.tran.z;
+    double cmd_x = 0.0;
+    double cmd_y = 0.0;
+    double cmd_z = 0.0;
+    if (arm_tcp_valid)
+    {
+        cmd_x = arm_tcp_at_grip_pose.tran.x + off_x;
+        cmd_y = arm_tcp_at_grip_pose.tran.y + off_y;
+        cmd_z = arm_tcp_at_grip_pose.tran.z + off_z;
+        last_cmd_valid = true;
+    }
+    else if (feedback_valid)
+    {
+        cmd_x = actual_tcp.tran.x;
+        cmd_y = actual_tcp.tran.y;
+        cmd_z = actual_tcp.tran.z;
+        last_cmd_valid = true;
+    }
+    if (last_cmd_valid)
+    {
+        last_cmd_x = cmd_x;
+        last_cmd_y = cmd_y;
+        last_cmd_z = cmd_z;
+    }
+
     int ret = robot.servo_p(&incr, MoveMode::INCR);
     if (ret != 0)
     {
         RCLCPP_WARN(rclcpp::get_logger("rc_ctrl"),
                     "[%s] servo_p failed: %s", arm_name, mapErr[ret].c_str());
+        blackbox_line("servo", "failed", incr, off_x, off_y, off_z,
+                      cmd_x, cmd_y, cmd_z, ret, false);
         return;
     }
+    blackbox_line("servo", "sent", incr, off_x, off_y, off_z,
+                  cmd_x, cmd_y, cmd_z, ret, false);
 
     // Track what we actually commanded so the next cycle's delta is measured
     // from the same reference the robot is using.
@@ -330,9 +557,12 @@ bool servo_hold(JAKAZuRobot &robot)
     hold.rpy.rx = 0.0;
     hold.rpy.ry = 0.0;
     hold.rpy.rz = 0.0;
+    poll_blackbox_feedback();
     int ret = robot.servo_p(&hold, MoveMode::INCR);
     if (ret != 0)
     {
+        blackbox_line("servo", "hold_failed", hold, 0.0, 0.0, 0.0,
+                      last_cmd_x, last_cmd_y, last_cmd_z, ret, true);
         if (debug)
         {
             RCLCPP_WARN(rclcpp::get_logger("rc_ctrl"),
@@ -340,6 +570,8 @@ bool servo_hold(JAKAZuRobot &robot)
         }
         return false;
     }
+    blackbox_line("servo", "hold", hold, 0.0, 0.0, 0.0,
+                  last_cmd_x, last_cmd_y, last_cmd_z, ret, true);
     return true;
 }
 
@@ -349,7 +581,10 @@ bool servo_hold(JAKAZuRobot &robot)
 // last joint target while its clutch is disengaged.
 void hold_stream_callback()
 {
-    if (!arm_ok || gripped || rearming || !hold_stream_enabled)
+    if (!arm_ok || rearming)
+        return;
+    poll_blackbox_feedback();
+    if (gripped || !hold_stream_enabled)
         return;
 
     if (!servo_hold(robot))
@@ -488,9 +723,17 @@ void rearm_worker()
         // y-limit is enforced against the actual position (grip TCP + handle
         // offset) without a stale per-cycle read-back.
         CartesianPose tcp_at_grip;
+        last_cmd_valid = false;
         arm_tcp_valid = (robot.get_tcp_position(&tcp_at_grip) == 0);
         if (arm_tcp_valid)
+        {
             arm_tcp_y_at_grip = tcp_at_grip.tran.y;
+            arm_tcp_at_grip_pose = tcp_at_grip;
+            last_cmd_x = tcp_at_grip.tran.x;
+            last_cmd_y = tcp_at_grip.tran.y;
+            last_cmd_z = tcp_at_grip.tran.z;
+            last_cmd_valid = true;
+        }
         // Write origin/prev BEFORE publishing gripped=true so the atomic gate
         // makes these writes visible to target_callback.
         ctrl_origin = origin;
@@ -828,12 +1071,43 @@ int main(int argc, char *argv[])
        grip_release_threshold = 0.4;
    }
 
+   const std::string blackbox_dir = node->declare_parameter<std::string>(
+       "servo_blackbox_dir", std::string("log/teleop"));
+   if (!blackbox_dir.empty())
+   {
+       std::error_code ec;
+       std::filesystem::create_directories(blackbox_dir, ec);
+       const auto stamp = std::to_string(std::chrono::duration_cast<
+           std::chrono::milliseconds>(
+               std::chrono::system_clock::now().time_since_epoch()).count());
+       const std::string path = blackbox_dir + "/" + arm_name + "_" + stamp + ".csv";
+       blackbox.open(path, std::ios::out | std::ios::trunc);
+       if (blackbox.is_open())
+       {
+           blackbox << std::setprecision(12);
+           blackbox_header();
+           blackbox.flush();
+           RCLCPP_INFO(rclcpp::get_logger("rc_ctrl"),
+                       "[%s] black box: %s", arm_name.c_str(), path.c_str());
+       }
+       else
+       {
+           RCLCPP_WARN(rclcpp::get_logger("rc_ctrl"),
+                       "[%s] cannot open black box '%s'; continuing without it",
+                       arm_name.c_str(), path.c_str());
+       }
+   }
+
 
     gripper = std::make_unique<pgi140::Pgi140Gripper>(robot, gripper_config);
     arm_ok = bring_up_arm(robot, ip, arm_name.c_str());
     if (!arm_ok)
     {
         gripper.reset();
+    }
+    else
+    {
+        calibrate_blackbox_feedback();
     }
 
     // Subscribe to the handle target topic and the shared button topic.
@@ -860,6 +1134,9 @@ int main(int argc, char *argv[])
                 "[%s] grip hysteresis: press>%.2f release<%.2f; "
                 "continuous 125 Hz hold when disengaged",
                 arm_name.c_str(), grip_press_threshold, grip_release_threshold);
+    RCLCPP_INFO(rclcpp::get_logger("rc_ctrl"),
+                "[%s] black box recording: %s",
+                arm_name.c_str(), blackbox.is_open() ? "on" : "off");
 
     rclcpp::spin(node);
 
@@ -887,6 +1164,11 @@ int main(int argc, char *argv[])
         }
         robot.servo_move_enable(false);
         robot.login_out();
+    }
+    if (blackbox.is_open())
+    {
+        blackbox.flush();
+        blackbox.close();
     }
     rclcpp::shutdown();
     return 0;
