@@ -25,7 +25,6 @@ setup(
     entry_points={
         "console_scripts": [
             "xrt_bridge = xrt_teleop.bridge_node:main",
-            "xrt_input_probe = xrt_teleop.input_probe:main",
         ],
     },
 )
