@@ -9,6 +9,5 @@
 /.cache/
 /.colcon/
 /.ros/
-/*_vision.log
 __pycache__/
 *.py[cod]
