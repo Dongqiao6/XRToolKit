@@ -390,7 +390,7 @@ class TestRemoteController(unittest.TestCase):
 
     self.assertEqual(srp_client.emergency_stop_calls, [True])
 
-  def test_y_button_releases_estop_and_enables_remote_control(self):
+  def test_y_button_enables_remote_control_without_emergency_stop(self):
     remote_controller = _load_remote_controller()
     srp_client = FakeSrpClient()
     controller = remote_controller(FakeNode(), srp_client)
@@ -399,9 +399,26 @@ class TestRemoteController(unittest.TestCase):
 
     controller._handle_button(make_joy(buttons=[0, 1]))
 
-    self.assertEqual(srp_client.release_emergency_stop_calls, [True])
+    # 无急停时不能调用 cancelEmergencyState：真机会返回 30001，旧逻辑会因此
+    # 提前 return，导致手动控制永远打不开。
+    self.assertEqual(srp_client.release_emergency_stop_calls, [])
     self.assertEqual(srp_client.remote_control_requests, [True])
     self.assertEqual(srp_client.oba_requests, [False])
+    self.assertTrue(controller._remote_control_enabled)
+
+  def test_y_button_releases_estop_before_enabling(self):
+    remote_controller = _load_remote_controller()
+    srp_client = FakeSrpClient()
+    controller = remote_controller(FakeNode(), srp_client)
+    # STATE_EMERGENCY_TRIGGER: 需要先解除急停
+    srp_client.system_state = FakeSystemState(emergency_state=2)
+    controller._wait_until_emergency_released = lambda timeout=2.0: True
+    controller._state_checker = FakeStateChecker([True])
+
+    controller._handle_button(make_joy(buttons=[0, 1]))
+
+    self.assertEqual(srp_client.release_emergency_stop_calls, [True])
+    self.assertEqual(srp_client.remote_control_requests, [True])
     self.assertTrue(controller._remote_control_enabled)
 
   def test_y_button_only_triggers_on_rising_edge(self):
@@ -414,13 +431,14 @@ class TestRemoteController(unittest.TestCase):
     controller._handle_button(make_joy(buttons=[0, 1]))
     controller._handle_button(make_joy(buttons=[0, 1]))
 
-    self.assertEqual(srp_client.release_emergency_stop_calls, [True])
+    self.assertEqual(srp_client.release_emergency_stop_calls, [])
     self.assertEqual(srp_client.remote_control_requests, [True])
 
   def test_y_button_does_not_enable_when_estop_still_active(self):
     remote_controller = _load_remote_controller()
     srp_client = FakeSrpClient()
     controller = remote_controller(FakeNode(), srp_client)
+    srp_client.system_state = FakeSystemState(emergency_state=2)
     controller._wait_until_emergency_released = lambda timeout=2.0: False
 
     controller._handle_button(make_joy(buttons=[0, 1]))
