@@ -103,6 +103,12 @@ def generate_launch_description():
     xrt_grip_threshold_arg = DeclareLaunchArgument(
         'xrt_grip_threshold', default_value='0.5',
         description='Threshold used for the digital LG/RG and LTr/RTr Joy buttons')
+    headset_yaw_offset_arg = DeclareLaunchArgument(
+        'headset_yaw_offset_deg', default_value='0.0',
+        description=(
+            'Extra yaw (deg) about the robot base z axis applied to headset '
+            'poses; 180 corrects a headset tracking frame anchored opposite '
+            'to the robot'))
     start_amr_arg = DeclareLaunchArgument(
         'start_amr', default_value='false',
         description='true = also start the AMR chassis controller')
@@ -120,6 +126,7 @@ def generate_launch_description():
             'publish_rate': LaunchConfiguration('xrt_publish_rate'),
             'smooth_alpha': LaunchConfiguration('xrt_smooth_alpha'),
             'grip_threshold': LaunchConfiguration('xrt_grip_threshold'),
+            'headset_yaw_offset_deg': LaunchConfiguration('headset_yaw_offset_deg'),
         }.items(),
     )
     rc_ctrl_launch = IncludeLaunchDescription(
@@ -201,6 +208,7 @@ def generate_launch_description():
         xrt_publish_rate_arg,
         xrt_smooth_alpha_arg,
         xrt_grip_threshold_arg,
+        headset_yaw_offset_arg,
         start_amr_arg,
         connect_ip_arg,
         xrt_bridge_launch,

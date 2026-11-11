@@ -6,6 +6,7 @@ import time
 
 import rclpy
 from geometry_msgs.msg import PoseStamped
+from rcl_interfaces.msg import ParameterDescriptor
 from rclpy.node import Node
 from rclpy.qos import QoSProfile
 from sensor_msgs.msg import Joy
@@ -60,6 +61,18 @@ class XrtTeleopBridge(Node):
         self.quest_mac = str(
             self.declare_parameter("quest_mac", "50:99:03:0a:38:78").value
         )
+        # Extra yaw (degrees) about the robot base z axis. The XRoboToolkit
+        # tracking frame is anchored when the headset session starts, so its
+        # heading can be rotated relative to the robot; 180 flips forward/back
+        # and left/right hand motion without touching up/down. Read every cycle
+        # so it can be corrected live with `ros2 param set`.
+        self.headset_yaw_offset_deg = float(
+            self.declare_parameter(
+                "headset_yaw_offset_deg",
+                0.0,
+                ParameterDescriptor(dynamic_typing=True),
+            ).value
+        )
 
         mapping_values = self.declare_parameter(
             "headset_to_robot", list(DEFAULT_HEADSET_TO_ROBOT)
@@ -95,6 +108,7 @@ class XrtTeleopBridge(Node):
         self._last_valid_trigger = {"left": 0.0, "right": 0.0}
         self._last_axes = None
         self._last_buttons = None
+        self._last_yaw_offset = None
         self._last_warning_time = 0.0
         self._xrt = None
         self._sdk_initialized = False
@@ -223,7 +237,7 @@ class XrtTeleopBridge(Node):
         message.pose.orientation.z = quaternion[3]
         return message
 
-    def _publish_pose(self, side, state):
+    def _publish_pose(self, side, state, yaw_offset=0.0):
         publisher = self.left_publisher if side == "left" else self.right_publisher
         if not state["pose_valid"]:
             if self._pose_was_valid[side]:
@@ -241,6 +255,7 @@ class XrtTeleopBridge(Node):
             scale=self.pose_scale,
             base_translation=self.base_translation,
             base_rotation=self.base_rotation,
+            yaw_offset=yaw_offset,
         )
         filtered = smooth_pose(
             self._filtered[side], position, quaternion, self.smooth_alpha
@@ -255,11 +270,23 @@ class XrtTeleopBridge(Node):
     def _publish(self):
         left = self._controller_state("left") if self.enable_left else {}
         right = self._controller_state("right") if self.enable_right else {}
+        try:
+            yaw_offset = math.radians(
+                float(self.get_parameter("headset_yaw_offset_deg").value)
+            )
+        except (TypeError, ValueError):
+            yaw_offset = 0.0
+        if yaw_offset != self._last_yaw_offset:
+            self.get_logger().info(
+                "Headset yaw offset: %.1f deg (robot base z)"
+                % math.degrees(yaw_offset)
+            )
+            self._last_yaw_offset = yaw_offset
 
         if self.enable_left:
-            self._publish_pose("left", left)
+            self._publish_pose("left", left, yaw_offset)
         if self.enable_right:
-            self._publish_pose("right", right)
+            self._publish_pose("right", right, yaw_offset)
 
         axes, buttons = joy_payload(left, right, self.grip_threshold)
         joy = Joy()

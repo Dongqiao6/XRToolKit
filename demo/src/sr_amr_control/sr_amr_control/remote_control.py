@@ -49,6 +49,16 @@ class RemoteController:
   _srp_client: SrpClient
   _TIMEOUT_SEC = 5
 
+  # SRP ResultCode 中与手动遥控相关的常见错误，日志里带上含义便于现场排查。
+  _RESULT_CODE_HINTS = {
+    30001: 'CANCEL_EMERGENCY_CAN_NOT_RECOVER（没有可解除的急停）',
+    70001: 'MANUAL_CONTROL_NOT_ON（底盘尚未进入手动控制）',
+    70002: 'START_MANUAL_CONTROL_IN_EMERGENCY（急停未解除）',
+    70003: 'START_MANUAL_CONTROL_IN_BRAKE_SW（抱闸开关未释放）',
+    70004: 'MANUAL_CONTROL_MOVEMENT_RUNNING（移动任务执行中）',
+    70005: 'MANUAL_CONTROL_MISSION_RUNNING（mission 执行中）',
+  }
+
   _service_group = MutuallyExclusiveCallbackGroup()
   _topic_group = MutuallyExclusiveCallbackGroup()
 
@@ -78,6 +88,7 @@ class RemoteController:
 
     self._estop_button_prev = False
     self._estop_release_button_prev = False
+    self._last_disabled_cmd_vel_warning_time = 0.0
 
     self._remote_control_enabled_srv = node.create_service(
       SetBool,
@@ -170,18 +181,62 @@ class RemoteController:
       )
 
   def _release_emergency_stop_and_enable(self):
-    try:
-      self._srp_client.release_emergency_stop()
-    except RequestFailedError as e:
-      self._node.get_logger().error(
-        f'Release emergency stop failed, error_code: {e.result_code}'
-      )
-      return
+    estop_active = self._is_emergency_stopped()
 
-    if not self._wait_until_emergency_released():
-      return
+    if estop_active is None:
+      # 状态尚未同步时无法判断是否处于急停。此时不要调用 cancelEmergencyState
+      # （无急停时会返回 30001），直接请求手动控制；若急停确实存在，底盘会以
+      # 70002 拒绝，不会产生运动。
+      self._node.get_logger().warning(
+        'AMR emergency state not received yet; requesting remote control directly'
+      )
+    elif estop_active:
+      try:
+        self._srp_client.release_emergency_stop()
+      except RequestFailedError as e:
+        # 30001 (CANCEL_EMERGENCY_CAN_NOT_RECOVER) 也可能表示急停状态已经被
+        # 清除。只有确认急停仍然存在时才中止，否则继续开启手动控制。
+        if self._is_emergency_stopped() is not False:
+          self._node.get_logger().error(
+            'Release emergency stop failed, error_code: '
+            f'{self._describe_result_code(e.result_code)}; '
+            'check the physical E-stop, safety laser and brake switch'
+          )
+          return
+        self._node.get_logger().warning(
+          'Release emergency stop returned '
+          f'{self._describe_result_code(e.result_code)}, '
+          'but the emergency state is already clear'
+        )
+      if not self._wait_until_emergency_released():
+        return
+    else:
+      # 正常上电时底盘并不处于急停状态，此时 cancelEmergencyState 会返回
+      # 30001。旧逻辑把它当作失败并直接 return，导致 Y 键永远打不开手动
+      # 控制、底盘不动，因此这里直接开启手动控制。
+      self._node.get_logger().info(
+        'AMR is not in emergency stop; enabling remote control directly'
+      )
 
     self._set_remote_control(True)
+
+  def _describe_result_code(self, code: int) -> str:
+    hint = self._RESULT_CODE_HINTS.get(code)
+    return f'{code}' if hint is None else f'{code} {hint}'
+
+  def shutdown(self):
+    """Release manual control so the chassis does not stay in MANUAL after exit."""
+    if not self._remote_control_enabled:
+      return
+    self._remote_control_enabled = False
+    try:
+      self._srp_client.set_remote_control(False)
+      self._node.get_logger().info('AMR remote control disabled on shutdown.')
+    except RequestFailedError as e:
+      self._node.get_logger().warning(
+        'Failed to disable AMR remote control on shutdown, error_code: '
+        f'{self._describe_result_code(e.result_code)}'
+      )
 
   def _is_emergency_stopped(self):
     state = self._srp_client.get_current_system_state()
@@ -225,7 +280,8 @@ class RemoteController:
         self._srp_client.set_remote_control_oba(False)
     except RequestFailedError as e:
       self._node.get_logger().error(
-        f'Remote control srv called failed, error_code: {e.result_code}'
+        'Remote control srv called failed, error_code: '
+        f'{self._describe_result_code(e.result_code)}'
       )
       return False, f'{e.result_code}'
 
@@ -288,6 +344,18 @@ class RemoteController:
 
   def _handle_cmd_vel(self, msg: Twist):
     if not self._remote_control_enabled:
+      now = time.monotonic()
+      has_motion = (
+        abs(msg.linear.x) > 0.0
+        or abs(msg.linear.y) > 0.0
+        or abs(msg.angular.z) > 0.0
+      )
+      if has_motion and now - self._last_disabled_cmd_vel_warning_time > 5.0:
+        self._last_disabled_cmd_vel_warning_time = now
+        self._node.get_logger().warning(
+          'Ignoring joystick speed: AMR remote control is not enabled. '
+          'Press the left Y button once to enable it.'
+        )
       return
 
     linear_x = msg.linear.x  # m/s
@@ -301,5 +369,6 @@ class RemoteController:
       )
     except RequestFailedError as e:
       self._node.get_logger().error(
-        f'Set remote control speed failed, error_code: {e.result_code}'
+        'Set remote control speed failed, error_code: '
+        f'{self._describe_result_code(e.result_code)}'
       )

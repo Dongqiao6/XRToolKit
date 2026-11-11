@@ -170,8 +170,17 @@ def transform_pose(
     scale=1.0,
     base_translation=(0.0, 0.0, 0.0),
     base_rotation=(1.0, 0.0, 0.0, 0.0),
+    yaw_offset=0.0,
 ):
-    """Map an XRoboToolkit pose to the robot base without filtering it."""
+    """Map an XRoboToolkit pose to the robot base without filtering it.
+
+    ``yaw_offset`` rotates the mapped pose about the robot base z axis. The
+    XRoboToolkit tracking frame is anchored when the headset session starts, so
+    its heading is not necessarily aligned with the robot: a headset that was
+    launched facing the opposite way rotates every hand motion by 180 degrees
+    (forward/back and left/right swap, up/down stays correct). Use math.pi to
+    compensate that case, or any other angle for a different heading.
+    """
     if not raw_pose_is_valid(raw_pose):
         raise ValueError("invalid or untracked controller pose")
     matrix = matrix_3x3(mapping)
@@ -186,6 +195,26 @@ def transform_pose(
         quaternion_multiply(mapping_quaternion, source_quaternion),
         quaternion_conjugate(mapping_quaternion),
     )
+
+    if yaw_offset:
+        cos_yaw = math.cos(yaw_offset)
+        sin_yaw = math.sin(yaw_offset)
+        x, y, z = mapped_position
+        mapped_position = (
+            cos_yaw * x - sin_yaw * y,
+            sin_yaw * x + cos_yaw * y,
+            z,
+        )
+        yaw_quaternion = (
+            math.cos(0.5 * yaw_offset),
+            0.0,
+            0.0,
+            math.sin(0.5 * yaw_offset),
+        )
+        mapped_quaternion = quaternion_multiply(
+            quaternion_multiply(yaw_quaternion, mapped_quaternion),
+            quaternion_conjugate(yaw_quaternion),
+        )
 
     base_matrix = quaternion_to_matrix(base_rotation)
     rotated_position = _mat_vec(base_matrix, mapped_position)

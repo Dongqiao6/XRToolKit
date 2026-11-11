@@ -44,6 +44,35 @@ class XrtAdapterTest(unittest.TestCase):
         self.assertAlmostEqual(quaternion[2], 0.0)
         self.assertAlmostEqual(quaternion[3], half_sqrt_two)
 
+    def test_yaw_offset_rotates_motion_about_robot_z(self):
+        # Default mapping sends (1,2,3) to (-3,-1,2); a 180 deg yaw about the
+        # robot z axis flips the horizontal axes and keeps z unchanged.
+        position, _ = transform_pose(
+            (1.0, 2.0, 3.0, 0.0, 0.0, 0.0, 1.0),
+            yaw_offset=math.pi,
+        )
+        self.assertAlmostEqual(position[0], 3.0)
+        self.assertAlmostEqual(position[1], 1.0)
+        self.assertAlmostEqual(position[2], 2.0)
+
+    def test_yaw_offset_quarter_turn(self):
+        position, _ = transform_pose(
+            (1.0, 2.0, 3.0, 0.0, 0.0, 0.0, 1.0),
+            yaw_offset=0.5 * math.pi,
+        )
+        self.assertAlmostEqual(position[0], 1.0)
+        self.assertAlmostEqual(position[1], -3.0)
+        self.assertAlmostEqual(position[2], 2.0)
+
+    def test_zero_yaw_offset_keeps_pose(self):
+        self.assertEqual(
+            transform_pose((1.0, 2.0, 3.0, 0.0, 0.0, 0.0, 1.0)),
+            transform_pose(
+                (1.0, 2.0, 3.0, 0.0, 0.0, 0.0, 1.0),
+                yaw_offset=0.0,
+            ),
+        )
+
     def test_zero_pose_is_untracked(self):
         self.assertFalse(raw_pose_is_valid((0.0,) * 7))
         self.assertTrue(

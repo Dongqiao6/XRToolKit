@@ -35,6 +35,14 @@ def generate_launch_description():
         "grip_threshold", default_value="0.5",
         description="Grip value used to classify the digital LG/RG buttons"
     )
+    headset_yaw_offset_arg = DeclareLaunchArgument(
+        "headset_yaw_offset_deg", default_value="0.0",
+        description=(
+            "Extra yaw (deg) about the robot base z axis applied to headset "
+            "poses; 180 corrects a headset tracking frame that was anchored "
+            "facing the opposite way"
+        )
+    )
 
     bridge_node = Node(
         package="xrt_teleop",
@@ -55,6 +63,9 @@ def generate_launch_description():
                 "grip_threshold": ParameterValue(
                     LaunchConfiguration("grip_threshold"), value_type=float
                 ),
+                "headset_yaw_offset_deg": ParameterValue(
+                    LaunchConfiguration("headset_yaw_offset_deg"), value_type=float
+                ),
             },
         ],
     )
@@ -63,5 +74,6 @@ def generate_launch_description():
         publish_rate_arg,
         smooth_alpha_arg,
         grip_threshold_arg,
+        headset_yaw_offset_arg,
         bridge_node,
     ])

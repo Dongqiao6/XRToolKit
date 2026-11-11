@@ -16,6 +16,12 @@ xrt_teleop_bridge:
     # aligned with RemoteCtrl's Quest reader and the official XRoboToolkit demo.
     headset_to_robot: [0.0, 0.0, -1.0, -1.0, 0.0, 0.0, 0.0, 1.0, 0.0]
 
+    # Extra yaw (deg) about the robot base z axis is set by the launch argument
+    # headset_yaw_offset_deg (default 0.0). 180 corrects a headset tracking
+    # frame that was anchored facing the opposite way: forward/back and
+    # left/right hand motion flip, up/down stays correct. It can also be
+    # changed live: ros2 param set /xrt_teleop_bridge headset_yaw_offset_deg 180
+
     # Optional Quest-origin calibration in the robot base frame.
     tf_translation: [0.0, 0.0, 0.0]
     tf_rotation: [1.0, 0.0, 0.0, 0.0]

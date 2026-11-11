@@ -390,7 +390,7 @@ class TestRemoteController(unittest.TestCase):
 
     self.assertEqual(srp_client.emergency_stop_calls, [True])
 
-  def test_y_button_releases_estop_and_enables_remote_control(self):
+  def test_y_button_enables_remote_control_without_emergency_stop(self):
     remote_controller = _load_remote_controller()
     srp_client = FakeSrpClient()
     controller = remote_controller(FakeNode(), srp_client)
@@ -399,9 +399,46 @@ class TestRemoteController(unittest.TestCase):
 
     controller._handle_button(make_joy(buttons=[0, 1]))
 
-    self.assertEqual(srp_client.release_emergency_stop_calls, [True])
+    # 没有急停时 cancelEmergencyState 会返回 30001，不能因此中止：必须直接
+    # 打开手动控制，否则底盘永远不会响应摇杆。
+    self.assertEqual(srp_client.release_emergency_stop_calls, [])
     self.assertEqual(srp_client.remote_control_requests, [True])
     self.assertEqual(srp_client.oba_requests, [False])
+    self.assertTrue(controller._remote_control_enabled)
+
+  def test_y_button_releases_estop_before_enabling(self):
+    remote_controller = _load_remote_controller()
+    srp_client = FakeSrpClient()
+    controller = remote_controller(FakeNode(), srp_client)
+    srp_client.system_state = FakeSystemState(emergency_state=2)  # TRIGGER
+    controller._wait_until_emergency_released = lambda timeout=5.0: True
+    controller._state_checker = FakeStateChecker([True])
+
+    controller._handle_button(make_joy(buttons=[0, 1]))
+
+    self.assertEqual(srp_client.release_emergency_stop_calls, [True])
+    self.assertEqual(srp_client.remote_control_requests, [True])
+    self.assertTrue(controller._remote_control_enabled)
+
+  def test_y_button_tolerates_cancel_emergency_30001_when_state_is_clear(self):
+    remote_controller = _load_remote_controller()
+    srp_client = FakeSrpClient()
+    controller = remote_controller(FakeNode(), srp_client)
+    srp_client.system_state = FakeSystemState(emergency_state=2)
+
+    def fail_release():
+      srp_client.release_emergency_stop_calls.append(True)
+      srp_client.system_state = FakeSystemState(emergency_state=1)
+      raise RequestFailedError(30001)
+
+    srp_client.release_emergency_stop = fail_release
+    controller._wait_until_emergency_released = lambda timeout=5.0: True
+    controller._state_checker = FakeStateChecker([True])
+
+    controller._handle_button(make_joy(buttons=[0, 1]))
+
+    self.assertEqual(srp_client.release_emergency_stop_calls, [True])
+    self.assertEqual(srp_client.remote_control_requests, [True])
     self.assertTrue(controller._remote_control_enabled)
 
   def test_y_button_only_triggers_on_rising_edge(self):
@@ -414,20 +451,72 @@ class TestRemoteController(unittest.TestCase):
     controller._handle_button(make_joy(buttons=[0, 1]))
     controller._handle_button(make_joy(buttons=[0, 1]))
 
-    self.assertEqual(srp_client.release_emergency_stop_calls, [True])
+    self.assertEqual(srp_client.release_emergency_stop_calls, [])
     self.assertEqual(srp_client.remote_control_requests, [True])
 
   def test_y_button_does_not_enable_when_estop_still_active(self):
     remote_controller = _load_remote_controller()
     srp_client = FakeSrpClient()
     controller = remote_controller(FakeNode(), srp_client)
-    controller._wait_until_emergency_released = lambda timeout=2.0: False
+    srp_client.system_state = FakeSystemState(emergency_state=2)
+    controller._wait_until_emergency_released = lambda timeout=5.0: False
 
     controller._handle_button(make_joy(buttons=[0, 1]))
 
     self.assertEqual(srp_client.release_emergency_stop_calls, [True])
     self.assertEqual(srp_client.remote_control_requests, [])
     self.assertFalse(controller._remote_control_enabled)
+
+  def test_y_button_does_not_enable_when_cancel_emergency_cannot_recover(self):
+    remote_controller = _load_remote_controller()
+    srp_client = FakeSrpClient()
+    controller = remote_controller(FakeNode(), srp_client)
+    srp_client.system_state = FakeSystemState(emergency_state=2)
+
+    def fail_release():
+      srp_client.release_emergency_stop_calls.append(True)
+      raise RequestFailedError(30001)
+
+    srp_client.release_emergency_stop = fail_release
+
+    controller._handle_button(make_joy(buttons=[0, 1]))
+
+    self.assertEqual(srp_client.release_emergency_stop_calls, [True])
+    self.assertEqual(srp_client.remote_control_requests, [])
+    self.assertFalse(controller._remote_control_enabled)
+
+  def test_cmd_vel_is_ignored_and_warned_when_remote_control_disabled(self):
+    remote_controller = _load_remote_controller()
+    srp_client = FakeSrpClient()
+    node = FakeNode()
+    controller = remote_controller(node, srp_client)
+
+    controller._handle_cmd_vel(make_cmd_vel())
+    controller._handle_cmd_vel(make_cmd_vel())
+
+    self.assertEqual(srp_client.speed_requests, [])
+    self.assertEqual(len(node.logger.warnings), 1)
+    self.assertIn('left Y', node.logger.warnings[0])
+
+  def test_shutdown_disables_remote_control(self):
+    remote_controller = _load_remote_controller()
+    srp_client = FakeSrpClient()
+    controller = remote_controller(FakeNode(), srp_client)
+    controller._remote_control_enabled = True
+
+    controller.shutdown()
+
+    self.assertEqual(srp_client.remote_control_requests, [False])
+    self.assertFalse(controller._remote_control_enabled)
+
+  def test_shutdown_is_noop_when_remote_control_was_never_enabled(self):
+    remote_controller = _load_remote_controller()
+    srp_client = FakeSrpClient()
+    controller = remote_controller(FakeNode(), srp_client)
+
+    controller.shutdown()
+
+    self.assertEqual(srp_client.remote_control_requests, [])
 
 
 if __name__ == '__main__':

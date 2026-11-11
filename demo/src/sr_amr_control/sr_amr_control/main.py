@@ -163,6 +163,12 @@ class SrAmrControl(Node):
       self.get_logger().info('Disconnecting...')
     else:
       print('Disconnecting... (ROS context ended)')
+    remote_controller = getattr(self, '_remote_controller', None)
+    if remote_controller is not None:
+      try:
+        remote_controller.shutdown()
+      except Exception as exc:  # best effort: never block shutdown
+        print(f'Disabling AMR remote control failed: {exc}')
     self._srp_client.disconnect()
     if is_ok:
       self.get_logger().info('Disconnected succeed.')
