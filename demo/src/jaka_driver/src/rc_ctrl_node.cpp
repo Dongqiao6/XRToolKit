@@ -92,6 +92,12 @@ int gripper_button_index = 0;
 bool gripper_linear = true; // true = linear (analog axes), false = digital (button)
 double gripper_trigger_deadband = 0.02; // minimal change to send new Grip()
 double prev_gripper_trigger = 0.0;
+// Gripper lock: X on the left controller and A on the right controller toggle a
+// freeze of the current gripper open/close state. While locked the trigger axis
+// is ignored so the PGI gripper keeps its last commanded position.
+bool gripper_locked = false;
+bool prev_lock_button = false;
+int gripper_lock_button_index = 0; // Joy.buttons: 0 = X (left), 2 = A (right)
 std::unique_ptr<pgi140::Pgi140Gripper> gripper;
 bool use_rpy_ctrl = true;   // true = 6D teleop, false = position-only fallback
 double rotation_scale = 0.5; // relative hand rotation mapped to the robot
@@ -808,6 +814,23 @@ void button_callback(const sensor_msgs::msg::Joy::SharedPtr msg)
 
     if (gripper != nullptr)
     {
+        // Toggle the gripper lock on this arm's lock button: X (Joy.buttons[0])
+        // for the left controller, A (Joy.buttons[2]) for the right. A rising
+        // edge flips the freeze so the operator can hold the current gripper
+        // open/close state and resume trigger following with another press.
+        bool lock_button =
+            msg->buttons.size() > static_cast<size_t>(gripper_lock_button_index) &&
+            msg->buttons[gripper_lock_button_index] != 0;
+        if (lock_button && !prev_lock_button)
+        {
+            gripper_locked = !gripper_locked;
+            RCLCPP_INFO(rclcpp::get_logger("rc_ctrl"),
+                        "[%s] PGI gripper %s",
+                        arm_name.c_str(),
+                        gripper_locked ? "locked" : "unlocked");
+        }
+        prev_lock_button = lock_button;
+
         // Two gripper control modes:
         // - "digital": binary control via a Joy button -> set_closed(bool)
         // - "linear" : analog control via a Joy axis -> Grip(float)
@@ -834,6 +857,11 @@ void button_callback(const sensor_msgs::msg::Joy::SharedPtr msg)
         }
         else // linear (analog) control
         {
+            // Frozen: keep the last commanded gripper position and ignore the
+            // trigger axis until the operator presses the lock button again.
+            if (gripper_locked)
+                return;
+
             float trigger_raw = msg->axes.size() > static_cast<size_t>(gripper_axis)
                                   ? msg->axes[gripper_axis] : 0.0f;
             // Normalize/clamp to [0,1]. Many controllers already report 0..1.
@@ -974,6 +1002,9 @@ int main(int argc, char *argv[])
     arm_name = node->declare_parameter<string>("arm_name", "left");
     bool is_right = (arm_name == "right");
     arm_is_right = is_right;
+    // Lock button: X (Joy.buttons[0]) on the left controller, A (Joy.buttons[2])
+    // on the right controller.
+    gripper_lock_button_index = is_right ? 2 : 0;
     string default_ip = is_right ? "192.168.71.36" : "192.168.71.37";
     string default_topic = is_right ? "/rc_ctrl/right_target" : "/rc_ctrl/left_target";
     int default_grip_axis = is_right ? 1 : 0;
