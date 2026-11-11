@@ -115,11 +115,17 @@ QUEST_IP=192.168.1.100 ./run_teleop.zsh
 | --- | --- |
 | 左/右 Grip | 按住控制对应手臂，松开后保持最后目标 |
 | 左/右 Trigger | 控制对应 PGI 夹爪 |
+| 右手柄 B | 切换双臂协同控制：开启后右手柄同时驱动双臂，再按一次退出 |
 | 左手柄摇杆 | AMR 启动后：上下前进/后退，左右转向 |
 | 左手柄 X / Y | AMR 软件急停 / 解除急停并开启遥控 |
 
 按住 Grip 后，手柄的相对平移和旋转会映射到机械臂末端。首次测试应空载、低速，
 并先分别验证左右臂。
+
+按一次**右手柄 B** 进入双臂协同控制：此后按住**右手柄 Grip**，左右两条手臂会
+跟随右手柄做相同的相对位移（例如同时上升、同时向左移动），松开 Grip 后双臂
+一起保持最后目标。此模式下左手柄 Trigger 仍单独控制左夹爪。再按一次
+**右手柄 B** 退出协同，恢复左右手柄各自控制对应手臂。
 
 启用六维姿态控制：
 
@@ -147,6 +153,7 @@ QUEST_IP=192.168.1.100 ./run_teleop.zsh
 | `grip_press_threshold` | `0.6` | Grip 按下阈值 |
 | `grip_release_threshold` | `0.4` | Grip 释放阈值 |
 | `enable_y_limit` | `true` | 限制双臂越过中线的 Y 方向运动 |
+| `headset_yaw_offset_deg` | `0.0` | 手柄跟踪坐标系相对机器人 z 轴的额外偏航角；方向反了时用 `180` |
 | `start_amr` | `false` | `true` 时同时启动移动底盘 |
 | `connect_ip` | `192.168.71.50` | AMR 控制器地址 |
 
@@ -258,9 +265,60 @@ JAKA 主机网络互通。
 检查对应 Grip 是否按住、目标话题是否有数据、JAKA 登录和使能日志是否正常，以及
 `enable_y_limit` 是否挡住了当前运动方向。
 
+**机械臂方向反了（前后、左右相反）**
+
+机械臂代码和手柄映射没有变：`headset_to_robot` 仍是官方 XRoboToolkit 约定
+（头显 -Z 前 → 机器人 +X）。但 Quest 的跟踪坐标系是在 **XRoboToolkit 会话启动
+那一刻** 以头显的朝向为基准建立的；如果启动时头显朝向与上次相差约 180°，手柄的
+前后、左右就会同时反过来，而上下方向仍然正确。这不是代码回归，是跟踪原点变了。
+
+两种修正方式：
+
+1. 不重启，直接把补偿角设成 180°（桥接节点每周期读取该参数）：
+
+   ```zsh
+   ros2 param set /xrt_teleop_bridge headset_yaw_offset_deg 180
+   ```
+
+   先小幅度推手柄确认方向，再正常操作；如果只是偏了 90°，改成 `90` 或 `-90`。
+   也可以在启动时直接带上：`./run_teleop.zsh headset_yaw_offset_deg:=180`。
+   调整补偿角前请先松开 Grip（避免机械臂跟随补偿角跳变），确认方向正确后再
+   按住 Grip 操作。
+
+2. 重新对齐跟踪原点：戴好头显、面朝希望作为"前方"的方向（与上次正常时一致），
+   长按 Meta/Home 键或打开通用菜单执行 **Reset View** 重定位；或者在这个姿态下
+   重新启动 XRoboToolkit（必要时先
+   `adb shell am force-stop com.xrobotoolkit.client.quest`）后再开始遥操作。
+   对齐后 `headset_yaw_offset_deg` 保持 0。
+
+每次重新启动 XRoboToolkit 后跟踪原点都可能变化，所以换场次后先小幅度验证一次
+方向，再恢复正常操作速度。
+
+无论用哪种方式，都先用小幅度、低速动作验证左右臂方向。
+
 **夹爪不动**
 
 核对 `gripper_rs485_channel`、PGI 站号、波特率和 JAKA App 中的 TIO 配置。
+
+**底盘不动**
+
+先确认 `start_amr:=true`，再按一次**左手柄 Y** 开启底盘遥控，然后推左手柄摇杆。
+正常日志应出现：
+
+```text
+AMR is not in emergency stop; enabling remote control directly
+Remote control state transitioned to True successfully.
+```
+
+旧版本在底盘没有急停时按 Y 会调用 `cancelEmergencyState`，底盘返回
+`30001`（没有可解除的急停），旧逻辑把该错误当作失败并提前返回，导致手动控制
+永远打不开、摇杆完全没有速度输出。修复后无急停时会跳过解除急停、直接开启手动
+控制；只有急停确实未解除（如急停按钮仍被按下）才会中止。
+
+若日志出现 `70002` / `70003`，分别检查物理急停与抱闸开关。还可以用 SDK 读取
+`operation_state`：`OPERATION_MANUAL` 表示摇杆速度才会被底盘接受，
+`OPERATION_AUTO` 表示手动控制尚未打开。节点退出时会自动关闭手动控制，使底盘
+回到 AUTO，不必手动恢复。
 
 ## 安全
 

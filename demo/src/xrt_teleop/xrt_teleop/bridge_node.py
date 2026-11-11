@@ -108,6 +108,8 @@ class XrtTeleopBridge(Node):
         self._last_valid_trigger = {"left": 0.0, "right": 0.0}
         self._last_axes = None
         self._last_buttons = None
+        self._dual_arm_mode = False
+        self._prev_b_button = False
         self._last_yaw_offset = None
         self._last_warning_time = 0.0
         self._xrt = None
@@ -267,6 +269,21 @@ class XrtTeleopBridge(Node):
             self.get_logger().info("%s controller tracking acquired" % side)
         self._pose_was_valid[side] = True
 
+    def _update_dual_arm_mode(self, right):
+        """Toggle dual-arm control on a rising edge of the right B button."""
+        b_pressed = bool(right.get("B", False))
+        if b_pressed and not self._prev_b_button:
+            self._dual_arm_mode = not self._dual_arm_mode
+            # Drop any stale left-pose filter state so the left arm re-anchors
+            # cleanly on the source controller after the mode change instead of
+            # smoothing from the previous source pose.
+            self._filtered["left"] = None
+            self.get_logger().info(
+                "Dual-arm control %s (right controller drives both arms)"
+                % ("enabled" if self._dual_arm_mode else "disabled")
+            )
+        self._prev_b_button = b_pressed
+
     def _publish(self):
         left = self._controller_state("left") if self.enable_left else {}
         right = self._controller_state("right") if self.enable_right else {}
@@ -283,12 +300,32 @@ class XrtTeleopBridge(Node):
             )
             self._last_yaw_offset = yaw_offset
 
-        if self.enable_left:
-            self._publish_pose("left", left, yaw_offset)
-        if self.enable_right:
-            self._publish_pose("right", right, yaw_offset)
+        # Right B button toggles dual-arm mode: while active the right controller
+        # drives BOTH arms, and holding the right grip engages them together.
+        self._update_dual_arm_mode(right)
 
-        axes, buttons = joy_payload(left, right, self.grip_threshold)
+        if self._dual_arm_mode:
+            if self.enable_right:
+                self._publish_pose("right", right, yaw_offset)
+            if self.enable_left:
+                # Feed the right controller's pose to the left arm so the two
+                # arms follow the same handle displacement simultaneously.
+                self._publish_pose("left", right, yaw_offset)
+        else:
+            if self.enable_left:
+                self._publish_pose("left", left, yaw_offset)
+            if self.enable_right:
+                self._publish_pose("right", right, yaw_offset)
+
+        # In dual-arm mode the left arm follows the right grip, so both arms
+        # engage and release together. The left trigger still drives the left
+        # gripper independently.
+        joy_left = left
+        if self._dual_arm_mode:
+            joy_left = dict(left)
+            joy_left["grip"] = right.get("grip", 0.0)
+
+        axes, buttons = joy_payload(joy_left, right, self.grip_threshold)
         joy = Joy()
         joy.header.stamp = self.get_clock().now().to_msg()
         joy.axes = axes
