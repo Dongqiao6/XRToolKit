@@ -78,7 +78,6 @@ class RemoteController:
 
     self._estop_button_prev = False
     self._estop_release_button_prev = False
-    self._last_disabled_cmd_vel_warning_time = 0.0
 
     self._remote_control_enabled_srv = node.create_service(
       SetBool,
@@ -171,38 +170,16 @@ class RemoteController:
       )
 
   def _release_emergency_stop_and_enable(self):
-    emergency_state = self._is_emergency_stopped()
+    try:
+      self._srp_client.release_emergency_stop()
+    except RequestFailedError as e:
+      self._node.get_logger().error(
+        f'Release emergency stop failed, error_code: {e.result_code}'
+      )
+      return
 
-    if emergency_state is None:
-      # 状态尚未同步时不做取消急停，直接请求手动控制；如果确实处于急停，
-      # 底盘会返回 70002 拒绝，不会产生运动。
-      self._node.get_logger().warning(
-        'Emergency state unavailable; requesting remote control anyway'
-      )
-    elif emergency_state:
-      try:
-        self._srp_client.release_emergency_stop()
-      except RequestFailedError as e:
-        # 没有急停时 cancelEmergencyState 会返回 30001
-        # (RESULT_CODE_CANCEL_EMERGENCY_CAN_NOT_RECOVER)。只有在急停仍未
-        # 解除时才中止，否则继续开启手动控制。
-        if self._is_emergency_stopped() is not False:
-          self._node.get_logger().error(
-            f'Release emergency stop failed, error_code: {e.result_code}'
-          )
-          return
-        self._node.get_logger().warning(
-          f'Release emergency stop reported error_code {e.result_code}, '
-          'but the emergency state is already clear'
-        )
-      if not self._wait_until_emergency_released():
-        return
-    else:
-      # 正常上电时底盘不在急停状态。此时取消急停会返回 30001，旧逻辑把它
-      # 当作失败并直接 return，导致 Y 键永远无法打开手动控制，底盘因此不动。
-      self._node.get_logger().info(
-        'AMR is not in emergency stop; enabling remote control directly'
-      )
+    if not self._wait_until_emergency_released():
+      return
 
     self._set_remote_control(True)
 
@@ -311,18 +288,6 @@ class RemoteController:
 
   def _handle_cmd_vel(self, msg: Twist):
     if not self._remote_control_enabled:
-      has_motion = (
-        abs(msg.linear.x) > 0.0
-        or abs(msg.linear.y) > 0.0
-        or abs(msg.angular.z) > 0.0
-      )
-      now = time.monotonic()
-      if has_motion and now - self._last_disabled_cmd_vel_warning_time > 5.0:
-        self._last_disabled_cmd_vel_warning_time = now
-        self._node.get_logger().warning(
-          'Ignoring joystick speed: remote control is not enabled. '
-          'Press the left Y button to enable AMR remote control.'
-        )
       return
 
     linear_x = msg.linear.x  # m/s
