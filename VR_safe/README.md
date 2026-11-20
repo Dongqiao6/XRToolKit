@@ -4,24 +4,33 @@
 
 本工程与 `../demo`、`../camera_zone`、`../Vision_Teleop` **运行期完全独立**：自己的 `.venv`、ROS 2 工作空间、配置、模型和启动脚本；只复制需要的源码，不改也不 import 兄弟目录。
 
-## 状态
+## 快速开始
 
-- 设计：[docs/design.md](docs/design.md)、[docs/spec.md](docs/spec.md)、[GLOSSARY.md](GLOSSARY.md)、[docs/adr/](docs/adr/)
-- 工单：[docs/tickets/](docs/tickets/)
-- 已实现并测试：安全契约、supervisor、感知、Quest 遥操作、双臂 C++、底盘、dry-run 闭环、真机 launch 冒烟。
-- 实现状态与证据：[docs/status.md](docs/status.md)；HIL 清单：[docs/hil-checklist.md](docs/hil-checklist.md)。
-- 真机 HIL 尚未执行：需要现场相机、JAKA 和 AMR，并先重标外参（当前 `ok:false`）。
+### 真机
 
-## 快速开始（无硬件）
+终端 1，启动 PC-service（每次重启主机后都要做，保持不关）：
 
 ```bash
-cd VR_safe
-./scripts/bootstrap.sh              # 建 venv、装依赖、检查模型、colcon build
-source scripts/env.sh
-./scripts/start.sh --dry-run        # 前台：supervisor + fake 双臂/底盘 + 场景，每秒状态行，跑完自动退出
+cd /opt/apps/roboticsservice
+./runService.sh
 ```
 
-dry-run 会依次验证：`CLEAR→GRANTED`、`NEAR→SLOW`、`OCCUPIED→REVOKED`、区域非空拒绝恢复、区域清空后确认恢复、心跳丢失→HOLD、急停→锁存、`clear_estop` 后仍需确认。最后打印 `PASS`。
+终端 2，启动 VR_safe：
+
+```bash
+cd ~/Documents/dj_main/XRToolKit/VR_safe
+./scripts/start.sh --real --allow-uncalibrated
+```
+
+`--allow-uncalibrated` 只用于当前外参 `ok:false` 的开发现场；外参有效后去掉。启动后前台每秒显示 `permit/obs/arm/chassis` 状态，默认打开相机窗口。
+
+停止：
+
+```bash
+./scripts/stop.sh
+```
+
+前台运行时也可以直接 Ctrl-C。
 
 查看状态 / 手动确认：
 
@@ -30,36 +39,29 @@ python3 scripts/status.py --once
 python3 scripts/confirm_resume.py --by 操作员
 ```
 
-## Quest 准备（真机）
-
-先启动 PC-service（**每次重启主机后都要做**，保持这个终端不关）：
+### 无硬件（dry-run / 测试）
 
 ```bash
-cd /opt/apps/roboticsservice
-./runService.sh
+cd ~/Documents/dj_main/XRToolKit/VR_safe
+./scripts/bootstrap.sh
+./scripts/start.sh --dry-run     # fake 双臂/底盘，跑完自动退出
+./scripts/test_all.sh            # 单元 + ctest + dry-run + launch 冒烟
 ```
 
-`start.sh --real` 会先调用 `scripts/launch_quest.sh`：通过 USB 或无线 adb 找到 Quest 3，必要时安装并拉起 `vendor/XRoboToolkit-Quest-1.0.1.apk`。首次建议 USB 连一次；之后脚本会缓存 `.quest_ip` 走无线。找不到 Quest 时 `start.sh` 会拒绝启动，避免“臂已使能但没有输入”。
+dry-run 覆盖 `CLEAR/NEAR/OCCUPIED`、恢复、心跳丢失、急停等安全闭环，最后打印 `PASS`。
 
-```bash
-QUEST_IP=192.168.1.105 ./scripts/launch_quest.sh   # 手动补启动
-QUEST_WAIT_UNPLUG=1 ./scripts/launch_quest.sh      # 有 USB 时等拔线（首次建议）
-QUEST_DATA_TIMEOUT=30 ./scripts/start.sh --real --allow-uncalibrated  # 改等待秒数
-./scripts/start.sh --real --allow-uncalibrated --no-quest  # APK 已在跑，跳过 adb
-# 只跑 supervisor + 感知、不使能双臂：
-ros2 launch vr_safe_bringup vr_safe.launch.py start_arms:=false start_teleop:=false start_amr:=false
-```
+## 手柄（真机）
 
-头显里必须打开 **Tracking** 和 **Send**；日志出现 `没有已跟踪的 Quest 控制器` 就是这一步没完成。
-
-### Quest 没连上怎么查
-
-1. `adb devices -l` 是否为空？为空 = 电脑根本没看到 Quest，先 USB 连一次或设置 `QUEST_IP`。
-2. `.quest_ip` 里的 IP 是否过期？删掉它或 `QUEST_IP=<新 IP>` 重试。
-3. `pgrep -af RoboticsServiceProcess` 是否有输出？没有 = PC-service 没跑。
-4. 头显里 XRoboToolkit 是否在前台，Tracking / Send 是否打开？
-5. 日志 `没有已跟踪的 Quest 控制器` 每 5 s 一条，说明桥活着但头显数据没到；不是安全链路故障。
-6. `start.sh --real` 现在会先跑 `launch_quest.sh`，失败就拒绝启动；APK 已在跑时可用 `--no-quest` 跳过 adb。
+| 输入 | 功能 |
+|---|---|
+| 左/右 Grip | 对应臂离合 |
+| 左/右 Trigger | 对应夹爪 |
+| 左摇杆 | 底盘线速度/角速度 |
+| X / A | 左右夹爪锁定 |
+| 左摇杆按下（LJ） | 系统软件急停 |
+| 右摇杆按下（RJ）长按 1.5s | 请求人工确认恢复许可（CLEAR/NEAR 时有效） |
+| Y | 解除 LJ 按钮锁存（不恢复许可） |
+| 右 B | 双臂协同模式 |
 
 ## 目录
 
@@ -96,6 +98,30 @@ VR_safe/
 - `UNKNOWN` 单独出现不停止（灰字提示），只有当前 `OCCUPIED` 或“人进过区后跟丢”才锁存。
 - `--no-camera-view` 关闭；`--camera-view` 强制开启（无显示会自动跳过）。
 
+## Quest 准备（真机）
+
+PC-service 已启动后，`start.sh --real` 会先调用 `scripts/launch_quest.sh`：通过 USB 或无线 adb 找到 Quest 3，必要时安装并拉起 `vendor/XRoboToolkit-Quest-1.0.1.apk`。首次建议 USB 连一次；之后脚本会缓存 `.quest_ip` 走无线。找不到 Quest 时 `start.sh` 会拒绝启动，避免“臂已使能但没有输入”。
+
+```bash
+QUEST_IP=192.168.1.105 ./scripts/launch_quest.sh   # 手动补启动
+QUEST_WAIT_UNPLUG=1 ./scripts/launch_quest.sh      # 有 USB 时等拔线（首次建议）
+QUEST_DATA_TIMEOUT=30 ./scripts/start.sh --real --allow-uncalibrated  # 改等待秒数
+./scripts/start.sh --real --allow-uncalibrated --no-quest  # APK 已在跑，跳过 adb
+# 只跑 supervisor + 感知、不使能双臂：
+ros2 launch vr_safe_bringup vr_safe.launch.py start_arms:=false start_teleop:=false start_amr:=false
+```
+
+头显里必须打开 **Tracking** 和 **Send**；日志出现 `没有已跟踪的 Quest 控制器` 就是这一步没完成。
+
+### Quest 没连上怎么查
+
+1. `adb devices -l` 是否为空？为空 = 电脑根本没看到 Quest，先 USB 连一次或设置 `QUEST_IP`。
+2. `.quest_ip` 里的 IP 是否过期？删掉它或 `QUEST_IP=<新 IP>` 重试。
+3. `pgrep -af RoboticsServiceProcess` 是否有输出？没有 = PC-service 没跑。
+4. 头显里 XRoboToolkit 是否在前台，Tracking / Send 是否打开？
+5. 日志 `没有已跟踪的 Quest 控制器` 每 5 s 一条，说明桥活着但头显数据没到；不是安全链路故障。
+6. `start.sh --real` 现在会先跑 `launch_quest.sh`，失败就拒绝启动；APK 已在跑时可用 `--no-quest` 跳过 adb。
+
 ## 运行形态
 
 - 真机默认**前台**：终端先打印 1/5–5/5 阶段，之后每秒一行
@@ -129,33 +155,19 @@ VR_safe/
 - 夹爪在 HOLD/SLOW 下保持最后位置，不自动张开。
 - supervisor 失联：臂 300 ms 没有新许可、底盘 300 ms 没有新许可，各自本地看门狗 HOLD；不依赖最后一条 GRANTED。
 
-## 手柄（真机）
-
-| 输入 | 功能 |
-|---|---|
-| 左/右 Grip | 对应臂离合 |
-| 左/右 Trigger | 对应夹爪 |
-| 左摇杆 | 底盘线速度/角速度 |
-| X / A | 左右夹爪锁定 |
-| 左摇杆按下（LJ） | 系统软件急停 |
-| 右摇杆按下（RJ）长按 1.5s | 请求人工确认恢复许可（CLEAR/NEAR 时有效） |
-| Y | 解除 LJ 按钮锁存（不恢复许可） |
-| 右 B | 双臂协同模式 |
-
 ## 标定
 
 - 区域：`config/calibration/zone_ground.json`（polygon）或 `zone_config.json`（plane/reach）。
 - 外参：`config/calibration/extrinsic_calib.json`；`ok:false` 时生产拒绝启动，开发用 `--allow-uncalibrated`。
 - 相机/外参重标后要重启 supervisor 和感知节点。
 
-## 测试
+## 状态
 
-```bash
-./scripts/bootstrap.sh
-source scripts/env.sh
-./scripts/test_all.sh          # 单元 + ctest + dry-run + 真机 launch 冒烟
-./scripts/test_dry_run.sh      # 只跑安全闭环
-```
+- 设计：[docs/design.md](docs/design.md)、[docs/spec.md](docs/spec.md)、[GLOSSARY.md](GLOSSARY.md)、[docs/adr/](docs/adr/)
+- 工单：[docs/tickets/](docs/tickets/)
+- 已实现并测试：安全契约、supervisor、感知、Quest 遥操作、双臂 C++、底盘、dry-run 闭环、真机 launch 冒烟。
+- 实现状态与证据：[docs/status.md](docs/status.md)；HIL 清单：[docs/hil-checklist.md](docs/hil-checklist.md)。
+- 真机 HIL 尚未执行：需要现场相机、JAKA 和 AMR，并先重标外参（当前 `ok:false`）。
 
 ## 已知限制
 
