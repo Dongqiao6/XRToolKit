@@ -1,0 +1,53 @@
+# Camera, model and window settings for the vision teleoperation bridge.
+camera:
+  # Teaching D435 (the two D435i are wrist cameras). Leave empty to take the
+  # first device, or set another serial to switch cameras.
+  serial: "347622070296"
+  color:
+    width: 1280
+    height: 720
+    fps: 30
+  depth:
+    width: 848
+    height: 480
+    fps: 30
+  # librealsense console verbosity: none / error / warning / info / debug.
+  # "none" hides the harmless "sequence size exceeds remaining buffer" chatter.
+  log_level: none
+  # Median window (pixels) when sampling depth around a landmark; 3 => 7x7.
+  depth_window: 4
+
+pose:
+  model: models/pose_landmarker_full.task
+  min_detection: 0.5
+  min_tracking: 0.5
+  min_visibility: 0.5
+
+hand:
+  model: models/hand_landmarker.task
+  crop_size: 256
+  min_detection: 0.4
+  min_presence: 0.4
+  # Seconds between hand inferences (clutch only); larger = smoother position.
+  interval_s: 0.12
+
+publish:
+  rate: 125.0
+  frame_id: world
+
+window:
+  enabled: true
+  scale: 1.0
+
+# One Euro smoothing of the mapped target. Off by default: any low-pass adds
+# group delay (~1/(2*pi*min_cutoff) seconds), and the depth gating plus the
+# per-frame target clamp already remove most of the jitter.
+# Turn it on if the arm still twitches, e.g. min_cutoff: 3.0, beta: 4.0 (~50 ms).
+smoothing:
+  enabled: false
+  min_cutoff: 3.0
+  beta: 4.0
+  derivative_cutoff: 1.0
+
+# Swallow the native LiteRT banner printed while loading the two models.
+quiet_native: true

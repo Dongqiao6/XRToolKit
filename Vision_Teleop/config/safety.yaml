@@ -1,0 +1,28 @@
+# Gesture thresholds, limits and workspace.
+# pinch_* are distances normalised by hand size (wrist to middle knuckle):
+# below pinch_close engages, above pinch_open releases (hysteresis).
+pinch_close: 0.525
+pinch_close_m: 0.030
+pinch_open_m: 0.050
+target_deadband_m: 0.008
+pinch_open: 0.619
+# Mean fingertip-to-wrist distance divided by hand size:
+# below fist_curl_enter counts as a clenched fist, above fist_curl_exit releases.
+fist_curl_enter: 1.039
+fist_curl_exit: 1.376
+fist_hold_s: 1.0
+lost_timeout_s: 0.35
+# Metres per publish tick. Keep below the downstream 5 mm/cycle clamp so the
+# rc_ctrl node never silently discards part of a move.
+follow_tau_s: 0.05
+max_step_m: 0.004
+max_target_step_m: 0.03
+depth_gate_m: 0.06
+workspace_min: [-0.6, -0.4, -0.3]
+workspace_max: [0.6, 0.4, 0.6]
+
+# Seconds a new gesture must persist before it is accepted.
+gesture_debounce_s: 0.15
+# Fist and pinch overlap on thumb-index distance (a fist also has the tips
+# close); a hand curled tighter than this is always read as a fist.
+pinch_min_curl: 1.2

@@ -1,0 +1,11 @@
+.venv/
+.install.log
+build/
+install/
+log/
+__pycache__/
+*.py[cod]
+models/*.task
+config/*.local.yaml
+.cache/
+.ros/

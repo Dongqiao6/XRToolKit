@@ -1,0 +1,8 @@
+# Python 3.10, aarch64. Keep numpy < 2.3: mediapipe and the aarch64 OpenCV
+# wheels are built against the 2.x ABI.
+numpy<2.3
+opencv-contrib-python
+pyrealsense2
+mediapipe
+scipy
+PyYAML

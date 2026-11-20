@@ -1,0 +1,28 @@
+# Camera-frame to robot-base-frame transform.
+#
+# The default rotation assumes the D435 stands in front of the operator,
+# upright, looking at them:
+#   camera +x (right)   -> base -y
+#   camera +y (down)    -> base -z
+#   camera +z (forward) -> base +x
+# Re-run scripts/calibrate.py to replace it with a measured rotation.
+rotation:
+  - [0.0, 0.0, 1.0]
+  - [-1.0, 0.0, 0.0]
+  - [0.0, -1.0, 0.0]
+scale: 1.0
+# Human wrist -> palm distance used to make the robot TCP follow the palm
+# instead of the wrist joint. Set 0.0 to track the wrist exactly.
+tool_offset_m: 0.08
+# Published position for zero displacement. Only deltas matter downstream.
+anchor_position: [0.0, 0.0, 0.0]
+
+# Derive the camera->base rotation from the operator's body every frame
+# (shoulder line = left/right, shoulder->hip = up). This is what makes the
+# system keep working when the camera is moved: no calibration step needed.
+# Set false to fall back to the static rotation above.
+use_body_frame: true
+# Flip a base axis here if the robot moves the wrong way, e.g. [1, -1, 1].
+axes_sign: [1.0, 1.0, 1.0]
+# EMA weight of the estimate; smaller follows slower but is steadier.
+body_frame_alpha: 0.05
