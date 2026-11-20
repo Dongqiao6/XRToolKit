@@ -1,0 +1,16 @@
+让本目录的 start.sh 开机后也能自动锁 CPU/GPU 满频（只需装一次）
+================================================================
+
+在 JAKA 本机终端里，逐行复制执行（会要一次 admin 密码）：
+
+echo 'admin ALL=(root) NOPASSWD: /usr/bin/jetson_clocks' | sudo tee /etc/sudoers.d/jetson_clocks >/dev/null
+sudo chmod 440 /etc/sudoers.d/jetson_clocks
+sudo visudo -cf /etc/sudoers.d/jetson_clocks
+
+最后一行输出 "parsed OK" 就装好了。
+这条规则只放行 jetson_clocks 这一个命令免密，别的 sudo 照旧要密码。
+
+验证：sudo -n /usr/bin/jetson_clocks --show | head -5    （不问密码、直接出结果 = 成功）
+撤销：sudo rm /etc/sudoers.d/jetson_clocks
+恢复锁频前的设置：sudo jetson_clocks --restore /home/admin/jetson_clocks_orig.conf
+不想让 start.sh 锁频：NO_CLOCKS=1 ./start.sh

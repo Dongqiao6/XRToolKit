@@ -1,0 +1,15 @@
+{
+  "schema": "s5_sim.diagnostics.v1",
+  "clearance_mm": 6.0,
+  "sigma_min": 0.02,
+  "wrist_margin_deg": 5.0,
+  "characteristic_length_m": 0.5,
+  "max_joint_step_deg": 0.5,
+  "max_slide_step_m": 0.001,
+  "max_samples": 20000,
+  "include_samples": false,
+  "stop_on_first_failure": true,
+  "sample_period_s": 0.06,
+  "live_query_period_s": 0.15,
+  "workbench_max_samples": 3000
+}

@@ -1,0 +1,78 @@
+{
+  "schema": "jaka_s5.collision_policy.v1",
+  "collision_group": 3,
+  "environment_geom_names": [
+    "inspection_floor"
+  ],
+  "exclude_same_body": true,
+  "exclude_same_fixed_island": true,
+  "exclude_exact_neighbor_arm_meshes": true,
+  "exclude_wheel_chassis_assembly": true,
+  "exclude_wheel_ground_rolling_contact": true,
+  "explicit_geom_exclusions": [
+    {
+      "pair": [
+        "left_gripper_body_collision_0",
+        "left_finger_left_collision_0"
+      ],
+      "reason": "Expected slider guide/root-stem interface: the conservative gripper body box does not cut the guide channel. Only this carrier or root-stem shape is excluded; toe, pad, opposite finger, wrist camera and other arm remain checked."
+    },
+    {
+      "pair": [
+        "left_gripper_body_collision_0",
+        "left_finger_left_collision_1"
+      ],
+      "reason": "Expected slider guide/root-stem interface: the conservative gripper body box does not cut the guide channel. Only this carrier or root-stem shape is excluded; toe, pad, opposite finger, wrist camera and other arm remain checked."
+    },
+    {
+      "pair": [
+        "left_gripper_body_collision_0",
+        "left_finger_right_collision_0"
+      ],
+      "reason": "Expected slider guide/root-stem interface: the conservative gripper body box does not cut the guide channel. Only this carrier or root-stem shape is excluded; toe, pad, opposite finger, wrist camera and other arm remain checked."
+    },
+    {
+      "pair": [
+        "left_gripper_body_collision_0",
+        "left_finger_right_collision_1"
+      ],
+      "reason": "Expected slider guide/root-stem interface: the conservative gripper body box does not cut the guide channel. Only this carrier or root-stem shape is excluded; toe, pad, opposite finger, wrist camera and other arm remain checked."
+    },
+    {
+      "pair": [
+        "right_gripper_body_collision_0",
+        "right_finger_left_collision_0"
+      ],
+      "reason": "Expected slider guide/root-stem interface: the conservative gripper body box does not cut the guide channel. Only this carrier or root-stem shape is excluded; toe, pad, opposite finger, wrist camera and other arm remain checked."
+    },
+    {
+      "pair": [
+        "right_gripper_body_collision_0",
+        "right_finger_left_collision_1"
+      ],
+      "reason": "Expected slider guide/root-stem interface: the conservative gripper body box does not cut the guide channel. Only this carrier or root-stem shape is excluded; toe, pad, opposite finger, wrist camera and other arm remain checked."
+    },
+    {
+      "pair": [
+        "right_gripper_body_collision_0",
+        "right_finger_right_collision_0"
+      ],
+      "reason": "Expected slider guide/root-stem interface: the conservative gripper body box does not cut the guide channel. Only this carrier or root-stem shape is excluded; toe, pad, opposite finger, wrist camera and other arm remain checked."
+    },
+    {
+      "pair": [
+        "right_gripper_body_collision_0",
+        "right_finger_right_collision_1"
+      ],
+      "reason": "Expected slider guide/root-stem interface: the conservative gripper body box does not cut the guide channel. Only this carrier or root-stem shape is excluded; toe, pad, opposite finger, wrist camera and other arm remain checked."
+    }
+  ],
+  "reason_templates": {
+    "same_body": "Two shapes are fixed within the same URDF link; not a relative collision degree of freedom.",
+    "same_fixed_island": "URDF fixed joints make these links one rigid assembly; internal envelope overlap is not an articulated collision query.",
+    "exact_neighbor_arm_meshes": "Only the two vendor arm link meshes joined by this exact arm joint share a bearing/interface. Attachments on either link are not excluded by this rule.",
+    "wheel_chassis_assembly": "The cylindrical drive-wheel envelope rotates in its fixed chassis wheel well. This assembly-interface exclusion does not hide arm/tool-to-wheel pairs.",
+    "wheel_ground_rolling_contact": "Intentional tire/ground rolling contact is outside robot collision-clearance diagnostics; no wheel-ground contact-dynamics validation is claimed."
+  },
+  "scope": "Pose-wise conservative geometric separation of the declared envelopes. Nonpositive means overlap or unresolved separation, not measured penetration. No physical, continuous-path or braking certificate."
+}

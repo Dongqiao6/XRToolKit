@@ -1,0 +1,1 @@
+MediaPipe 的 pose_landmarker_full.task 和 hand_landmarker.task 放这个目录。从 MediaPipe 官网下载，或找我要。

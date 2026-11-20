@@ -1,0 +1,18 @@
+safety:
+  # 现场 CPU MediaPipe 实测约 5 Hz（0.20 s/帧），0.3 s 会频繁误锁；
+  # 先放宽到 0.8 s 救急，等感知优化后再收紧。
+  observation_timeout_s: 0.8
+  occupied_debounce_frames: 2
+  heartbeat_timeout_s: 0.3
+  require_teleop_heartbeat: true
+  required_sources: [camera_top]
+  teleop_source: teleop
+  publish_rate_hz: 10.0
+  audit_path: log/safety.jsonl
+
+topics:
+  observation: /vr_safe/observation
+  heartbeat: /vr_safe/teleop/heartbeat
+  permit: /vr_safe/permit
+  confirm_resume: /vr_safe/confirm_resume
+  clear_estop: /vr_safe/clear_estop

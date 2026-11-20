@@ -1,0 +1,130 @@
+{
+  "schema": "jaka_s5_dual.camera_assemblies.v1",
+  "intrinsics_calibrated": false,
+  "extrinsics_calibrated": false,
+  "camera_link_convention": "+X forward, +Y left, +Z up",
+  "optical_frame_convention": "+X right, +Y down, +Z forward",
+  "cameras": [
+    {
+      "id": "top",
+      "role": "top",
+      "enabled": true,
+      "parent": "base_link",
+      "xyz": [
+        0.065,
+        0.0,
+        1.666
+      ],
+      "rpy": [
+        0.0,
+        0.3141592653589793,
+        0.0
+      ],
+      "housing_size_xyz_m": [
+        0.023,
+        0.042,
+        0.042
+      ],
+      "optical_xyz": [
+        0.0135,
+        0.0,
+        0.0
+      ],
+      "optical_rpy": [
+        -1.5707963267948966,
+        0.0,
+        -1.5707963267948966
+      ],
+      "optical_frame": "top_camera_optical_frame",
+      "mujoco_name": "top_camera",
+      "fovy_deg": 60.0,
+      "fovy_status": "assumed_preview_not_calibrated",
+      "intrinsics": null,
+      "model_id": "D405C",
+      "candidate_model": null,
+      "geometry_note": "Photo-informed enclosure retained; physical dimensions remain provisional",
+      "extrinsic_note": "Forward/downward mounting candidate from photo; not a calibrated camera-to-base transform."
+    },
+    {
+      "id": "left_wrist",
+      "role": "wrist",
+      "enabled": true,
+      "parent": "left_Link_06",
+      "xyz": [
+        0.0,
+        -0.064,
+        0.065
+      ],
+      "rpy": [
+        1.5707963267948966,
+        -1.5707963267948966,
+        0.0
+      ],
+      "housing_size_xyz_m": [
+        0.032,
+        0.09,
+        0.045
+      ],
+      "optical_xyz": [
+        0.018,
+        0.0,
+        0.0
+      ],
+      "optical_rpy": [
+        -1.5707963267948966,
+        0.0,
+        -1.5707963267948966
+      ],
+      "optical_frame": "left_wrist_camera_optical_frame",
+      "mujoco_name": "left_wrist_camera",
+      "fovy_deg": 60.0,
+      "fovy_status": "assumed_preview_not_calibrated",
+      "intrinsics": null,
+      "model_id": "D435i",
+      "candidate_model": null,
+      "geometry_note": "Photo-informed enclosure retained; physical dimensions remain provisional",
+      "extrinsic_note": "Static flange-side candidate. Optical+Z points along flange+Z toward gripper work space. Does not move with finger joints."
+    },
+    {
+      "id": "right_wrist",
+      "role": "wrist",
+      "enabled": true,
+      "parent": "right_Link_06",
+      "xyz": [
+        0.0,
+        -0.064,
+        0.065
+      ],
+      "rpy": [
+        1.5707963267948966,
+        -1.5707963267948966,
+        0.0
+      ],
+      "housing_size_xyz_m": [
+        0.032,
+        0.09,
+        0.045
+      ],
+      "optical_xyz": [
+        0.018,
+        0.0,
+        0.0
+      ],
+      "optical_rpy": [
+        -1.5707963267948966,
+        0.0,
+        -1.5707963267948966
+      ],
+      "optical_frame": "right_wrist_camera_optical_frame",
+      "mujoco_name": "right_wrist_camera",
+      "fovy_deg": 60.0,
+      "fovy_status": "assumed_preview_not_calibrated",
+      "intrinsics": null,
+      "model_id": "D435i",
+      "candidate_model": null,
+      "geometry_note": "Photo-informed enclosure retained; physical dimensions remain provisional",
+      "extrinsic_note": "Static flange-side candidate. Optical+Z points along flange+Z toward gripper work space. Does not move with finger joints."
+    }
+  ],
+  "calibration_scope": "Intrinsics and extrinsics explicitly deferred by user; no recalibration in v0.4"
+}

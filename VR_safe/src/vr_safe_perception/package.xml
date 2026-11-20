@@ -1,0 +1,29 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>vr_safe_perception</name>
+  <version>0.1.0</version>
+  <description>VR_safe 相机观察源：Orbbec/RealSense 或录像回放 → 五档判定 → 四值 SafetyObservation。</description>
+  <maintainer email="zwt@example.com">zwt</maintainer>
+  <license>Apache-2.0</license>
+
+  <buildtool_depend>ament_python</buildtool_depend>
+
+  <exec_depend>rclpy</exec_depend>
+  <exec_depend>sensor_msgs</exec_depend>
+  <exec_depend>std_msgs</exec_depend>
+  <exec_depend>vr_safe_interfaces</exec_depend>
+  <exec_depend>ament_index_python</exec_depend>
+  <exec_depend>python3-numpy</exec_depend>
+  <exec_depend>python3-opencv</exec_depend>
+  <exec_depend>python3-yaml</exec_depend>
+
+  <test_depend>python3-pytest</test_depend>
+
+  <!-- MediaPipe / pyorbbecsdk / pyrealsense2 由 VR_safe 的 .venv 安装，
+       ROS 发行版没有稳定的 apt 包，所以不写成 rosdep 依赖。 -->
+
+  <export>
+    <build_type>ament_python</build_type>
+  </export>
+</package>

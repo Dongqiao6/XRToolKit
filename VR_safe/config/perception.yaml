@@ -1,0 +1,75 @@
+# VR_safe 感知配置。字段缺失、类型不对、取值越界或出现未知字段，节点都会
+# 拒绝启动。配置里的相对路径一律相对 VR_safe/ 解析。
+node:
+  source_id: camera_top
+  zone_id: default
+  topic: /vr_safe/observation
+  # 正常推理时的发布上限；推理慢于它时自然降频。
+  publish_rate_hz: 30.0
+  # 相机打不开/连续读帧失败时，以这个频率持续发 UNKNOWN。
+  unknown_rate_hz: 5.0
+  # 相机故障后每隔多久重试打开。
+  camera_retry_s: 5.0
+  # 连续多少帧读失败/处理失败后进入 UNKNOWN 兜底循环。
+  camera_max_consecutive_errors: 5
+
+camera:
+  # orbbec | realsense | auto（auto 按 Orbbec 优先自动挑）
+  backend: orbbec
+  width: 848
+  height: 480
+  fps: 30
+  # 丢掉 SDK 队列里积压的旧帧，只处理最新一帧。
+  latest_only: true
+
+models:
+  pose: models/pose_landmarker_full.task
+  hand: models/hand_landmarker.task
+  # mp = MediaPipe CPU（默认）；gpu = camera_zone 的 YOLOX+RTMW（模型需另放 models/gpu/）
+  pose_backend: mp
+  max_persons: 3
+
+calibration:
+  # polygon = zone_ground.json 里的地面多边形（默认）
+  # reach   = jaka_model.reach_spheres 机械臂可达空间
+  zone_mode: polygon
+  zone_file: config/calibration/zone_ground.json
+  zone_config: config/calibration/zone_config.json
+  extrinsic_file: config/calibration/extrinsic_calib.json
+  camera_id: top
+  # true = 生产模式：外参缺失/ok:false/地面不匹配时拒绝启动。
+  # 开发时用启动参数 --allow-uncalibrated 显式降级。
+  require_valid: true
+  max_ground_angle_deg: 0.5
+  max_ground_offset_m: 0.02
+
+reach:
+  # 可达球半径额外加多少余量（米）。保护范围宁大勿小。
+  margin_m: 0.25
+  # 随机采样验证解析上界的样本数；0 = 不采样。
+  samples: 600
+
+zone:
+  # 区域柱体高度：离地面多高以内算在区域内。
+  height_m: 2.2
+  # 人在区域外但离边界多近算 NEAR。
+  near_m: 0.5
+
+quality:
+  # 画面质量门：深度有效像素占比、贴镜头像素占比、拉普拉斯纹理方差。
+  min_depth_valid: 0.25
+  max_near_cover: 0.30
+  min_texture: 18.0
+  # 连续不可信多久才报「看不清」；恢复后稳定多久才取消。
+  bad_s: 0.4
+  good_s: 0.3
+
+pose:
+  # upper = 只用髋及以上判定（默认）；full = 含腿脚
+  body_parts: upper
+  min_good_lms_upper: 9
+  pose_conf: 0.8
+
+grader:
+  # 降档要连续多少帧更安全才退一级；升档永远即时。
+  relax_n: 12

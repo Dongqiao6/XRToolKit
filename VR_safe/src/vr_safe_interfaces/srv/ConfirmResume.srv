@@ -1,0 +1,6 @@
+# 人工确认恢复。区域非空/未知时 supervisor 必须拒绝。
+string confirmed_by       # 谁确认的
+string note               # 备注，可空
+---
+bool accepted
+string message

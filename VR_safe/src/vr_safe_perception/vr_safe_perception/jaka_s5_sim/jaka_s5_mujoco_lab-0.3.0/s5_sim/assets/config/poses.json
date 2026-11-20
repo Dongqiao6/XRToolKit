@@ -1,0 +1,55 @@
+{
+  "schema": "jaka_s5_dual.poses.v1",
+  "poses": {
+    "installation_screenshots": {
+      "joint_positions_deg": {
+        "left_joint_1": -3.086,
+        "left_joint_2": 104.378,
+        "left_joint_3": 53.174,
+        "left_joint_4": 178.752,
+        "left_joint_5": -171.391,
+        "left_joint_6": 279.212,
+        "right_joint_1": -164.553,
+        "right_joint_2": 80.834,
+        "right_joint_3": -94.509,
+        "right_joint_4": 188.522,
+        "right_joint_5": -199.851,
+        "right_joint_6": 205.669
+      }
+    },
+    "zero": {
+      "joint_positions_rad": {
+        "left_joint_1": 0,
+        "left_joint_2": 0,
+        "left_joint_3": 0,
+        "left_joint_4": 0,
+        "left_joint_5": 0,
+        "left_joint_6": 0,
+        "right_joint_1": 0,
+        "right_joint_2": 0,
+        "right_joint_3": 0,
+        "right_joint_4": 0,
+        "right_joint_5": 0,
+        "right_joint_6": 0
+      }
+    },
+    "reference_ready": {
+      "joint_positions_rad": {
+        "left_joint_1": 0.0,
+        "left_joint_2": 1.8325957145940461,
+        "left_joint_3": 0.7853981633974483,
+        "left_joint_4": 3.141592653589793,
+        "left_joint_5": -2.6179938779914944,
+        "left_joint_6": 0.0,
+        "right_joint_1": 3.141592653589793,
+        "right_joint_2": 1.3089969389957472,
+        "right_joint_3": -1.8325957145940461,
+        "right_joint_4": 3.141592653589793,
+        "right_joint_5": -2.6179938779914944,
+        "right_joint_6": 0.0,
+        "left_finger_left_joint": 0.015,
+        "right_finger_left_joint": 0.015
+      }
+    }
+  }
+}

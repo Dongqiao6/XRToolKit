@@ -1,0 +1,8 @@
+# 人工确认恢复。人离开区域不自动恢复，必须有人确认——老师明确要求的。
+
+# 字段名不能叫 operator——那是 C++ 关键字，rosidl 生成的头文件会直接语法错。
+string confirmed_by     # 谁确认的
+string note         # 备注，可空
+---
+bool accepted
+string message      # 不接受时说明原因，例如「区域里还有人」

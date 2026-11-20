@@ -1,4 +1,29 @@
-# Generated colcon/ROS outputs must stay under demo/, not the repository root.
+# Root colcon/ROS outputs must stay under each project; never commit them.
 /build/
 /install/
 /log/
+
+# Python environments and caches (all subprojects)
+**/.venv/
+**/venv/
+**/__pycache__/
+**/*.pyc
+**/.pytest_cache/
+**/.cache/
+**/.ros/
+**/*.egg-info/
+
+# camera_zone generated/runtime artifacts
+camera_zone/out/
+camera_zone/Log/
+camera_zone/wheels/
+camera_zone/ros_ws/build/
+camera_zone/ros_ws/install/
+camera_zone/ros_ws/log/
+camera_zone/models/gpu/
+camera_zone/models/*.onnx
+camera_zone/models/pose_landmarker_lite.task
+camera_zone/models/pose_landmarker_heavy.task
+camera_zone/backup_*/
+camera_zone/*.bak_*
+camera_zone/.quest_ip

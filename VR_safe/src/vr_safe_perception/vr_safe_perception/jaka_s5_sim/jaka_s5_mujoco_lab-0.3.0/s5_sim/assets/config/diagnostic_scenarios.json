@@ -1,0 +1,146 @@
+{
+  "schema": "jaka_s5.diagnostic_scenarios.v1",
+  "joint_order": [
+    "left_joint_1",
+    "left_joint_2",
+    "left_joint_3",
+    "left_joint_4",
+    "left_joint_5",
+    "left_joint_6",
+    "right_joint_1",
+    "right_joint_2",
+    "right_joint_3",
+    "right_joint_4",
+    "right_joint_5",
+    "right_joint_6"
+  ],
+  "scope": "Fixed diagnostic fixtures, not executable or approved hardware commands",
+  "source_urdf_sha256": "112e1b41a4ad951192e198ae5924534749a25ba1027c87c88067a9e0f550711d",
+  "cases": [
+    {
+      "id": "reference_ready",
+      "title": "默认仿真参考位",
+      "description": "独立配置的仿真起点，双臂末端位于底盘两侧，主指各张开15mm。",
+      "q_deg": [
+        0,
+        105,
+        45,
+        180,
+        -150,
+        0,
+        180,
+        75,
+        -105,
+        180,
+        -150,
+        0
+      ],
+      "source_kind": "synthetic",
+      "finger_opening_m": 0.015
+    },
+    {
+      "id": "installation",
+      "title": "安装截图姿态",
+      "description": "载入用户提供的两组安装关节角，夹指各10mm为示意开度；重新检查当前模型，不预设通过。",
+      "q_deg": [
+        -3.086,
+        104.378,
+        53.174,
+        178.752,
+        -171.391,
+        279.212,
+        -164.553,
+        80.834,
+        -94.509,
+        188.522,
+        -199.851,
+        205.669
+      ],
+      "finger_opening_m": 0.01,
+      "source_kind": "recorded_joint_angles",
+      "expected": "inspection_only_no_inherited_approval",
+      "fingers_m": 0.01
+    },
+    {
+      "id": "reference_open",
+      "title": "仿真参考位 · 夹指张开",
+      "description": "沿用独立参考位，主指各张开20mm。",
+      "q_deg": [
+        0,
+        105,
+        45,
+        180,
+        -150,
+        0,
+        180,
+        75,
+        -105,
+        180,
+        -150,
+        0
+      ],
+      "finger_opening_m": 0.02,
+      "source_kind": "synthetic",
+      "expected": "must_recheck_current_geometry",
+      "fingers_m": 0.02
+    },
+    {
+      "id": "synthetic_wrist_zero",
+      "title": "合成案例 · 腕部零位",
+      "description": "将仿真参考位的左J5置零，复现腕部退化。",
+      "q_deg": [
+        0,
+        105,
+        45,
+        180,
+        0,
+        0,
+        180,
+        75,
+        -105,
+        180,
+        -150,
+        0
+      ],
+      "finger_opening_m": 0.02,
+      "source_kind": "synthetic",
+      "expected": "ordinary_singularity_threshold_refusal",
+      "fingers_m": 0.02
+    },
+    {
+      "id": "synthetic_interarm",
+      "title": "合成案例 · 双臂末端相遇",
+      "description": "确定性几何构造：两末端在车体前方相遇，用于复现互碰拒绝；其他类别已独立检查，非现场记录。",
+      "q_deg": [
+        -89.38714561835975,
+        159.16406122927066,
+        29.22674496350895,
+        117.3499624518296,
+        -70.69197703757973,
+        279.21200002129785,
+        -90.52160205271875,
+        50.400210692729736,
+        -114.36261826633906,
+        182.0861958549815,
+        -289.419845655962,
+        205.669
+      ],
+      "finger_opening_m": 0.02,
+      "source_kind": "synthetic",
+      "expected": "inter_arm_clearance_refusal",
+      "fingers_m": 0.02
+    }
+  ],
+  "detour": {
+    "crossing_case": "synthetic_interarm",
+    "moving_joint": "left_joint_1",
+    "detour_joint": "right_joint_2",
+    "span_deg": 8,
+    "offsets_deg": [
+      4,
+      -4,
+      8,
+      -8
+    ]
+  }
+}

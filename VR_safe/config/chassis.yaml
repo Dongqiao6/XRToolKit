@@ -1,0 +1,60 @@
+# 底盘配置。本文件是底盘节点唯一的策略入口；节点拒绝未知字段、类型错误和
+# 越界值，避免现场把笔误当默认值跑起来。
+#
+# 用法（config 是纯 YAML 路径，不是 ROS params 文件）：
+#   ros2 run vr_safe_chassis chassis_node --ros-args \
+#     -p config:=$HOME/Documents/dj_main/XRToolKit/VR_safe/config/chassis.yaml
+#
+# 也可用扁平 ROS 参数临时覆盖，例如：
+#   -p dry_run:=true  -p slow_scale:=0.2  -p connect_ip:=192.168.71.51
+# 显式参数优先于本文件。
+chassis:
+  # true = 不 import/连接 SrpClient，用内存状态/里程计；许可门、零速 keepalive
+  # 和 ChassisState 照常运行，方便会议室/CI 无 AMR 测试。
+  dry_run: false
+
+  # AMR 连接（Standard Robots SRP）。连接失败按约定中止启动。
+  connect_ip: "192.168.71.50"
+  connect_username: ""
+  connect_passwd: ""
+
+  # 坐标系
+  frame_id: base_link
+  parent_frame_id: map
+  odom_frame_id: odom
+  odom_use_integration: true
+
+  # 手柄速度上限与死区；SLOW 许可时再乘 slow_scale。
+  max_linear_speed: 0.5   # m/s
+  max_angular_speed: 0.8  # rad/s
+  joy_deadzone: 0.2
+  slow_scale: 0.3
+
+  # 安全时序
+  zero_keepalive_ms: 100   # REVOKED/HOLD 时零速重发周期（AMR 会保留最后速度）
+  twist_watchdog_ms: 200   # 本地无新 Twist 自动零速
+  permit_watchdog_ms: 300  # supervisor 多久没新许可就自动 HOLD
+  max_zero_failures: 5     # 连续零速失败几次升级 AMR emergency_stop
+  gate_tick_period_ms: 20  # 许可门周期，必须不大于上面两个周期
+  speed_resend_ms: 50      # 相同速度最多按此周期重发（Joy 可能 125 Hz 重复）
+
+  # 按键：X 已归夹爪锁定，不能再把 X 当底盘急停。
+  estop_button: -1         # -1 = 禁用本地 AMR 急停键
+  estop_release_button: 1  # Y：解除 AMR 急停 + 重新使能遥控（deadman）
+
+  # 状态发布与 SRP 状态同步
+  state_publish_rate_hz: 10.0
+  sync_state_period_s: 0.3
+
+topics:
+  permit: /vr_safe/permit
+  button: /vr_safe/teleop/button
+  cmd_vel: /vr_safe/chassis/cmd_vel        # 可选外部 Twist；主路径是 Joy
+  state: /vr_safe/chassis/state
+  system_state: /vr_safe/chassis/system_state
+  battery_state: /vr_safe/chassis/battery_state
+  odom: /vr_safe/chassis/odom
+  remote_control_enabled: /vr_safe/chassis/remote_control_enabled
+  remote_control_oba_enabled: /vr_safe/chassis/remote_control_oba_enabled
+  emergency_stop: /vr_safe/chassis/emergency_stop
+  release_emergency_stop: /vr_safe/chassis/release_emergency_stop

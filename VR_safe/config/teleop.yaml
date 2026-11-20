@@ -1,0 +1,81 @@
+# VR_safe Quest 遥操作桥配置（ROS 2 参数文件）。
+#
+# 用法：
+#   ros2 run vr_safe_teleop teleop_bridge --ros-args \
+#     --params-file VR_safe/config/teleop.yaml
+#
+# 安全约束：本桥只允许发布/调用 /vr_safe/*；旧的 demo 话题 /rc_ctrl/* 会被
+# 参数校验直接拒绝。话题、频率、按键的改动都属于遥操作契约的一部分。
+vr_safe_teleop_bridge:
+  ros__parameters:
+    # ── 话题与服务 ──
+    left_target_topic: /vr_safe/teleop/left_target
+    right_target_topic: /vr_safe/teleop/right_target
+    button_topic: /vr_safe/teleop/button
+    heartbeat_topic: /vr_safe/teleop/heartbeat
+    observation_topic: /vr_safe/observation
+    clear_estop_service: /vr_safe/clear_estop
+    confirm_service: /vr_safe/confirm_resume
+    confirm_status_topic: /vr_safe/teleop/confirm_status
+    permit_topic: /vr_safe/permit
+
+    # ── 频率 ──
+    publish_rate: 125.0        # 目标/Joy 发布频率，与 demo 一致
+    heartbeat_rate_hz: 20.0    # supervisor 心跳，独立于目标发布
+    heartbeat_source_id: teleop
+    # 设计文档写的是 BEST_EFFORT；现有 supervisor 用默认 RELIABLE 订阅，
+    # BEST_EFFORT 发布端与 RELIABLE 订阅端不兼容、收不到心跳。
+    # RELIABLE 发布端可以同时被 RELIABLE/BEST_EFFORT 订阅，因此默认 reliable。
+    # 只有 supervisor 改成 BEST_EFFORT 订阅后，这里才应改为 best_effort。
+    heartbeat_qos_reliability: reliable
+
+    # ── 坐标映射与平滑 ──
+    # XRoboToolkit/OpenXR 头显轴 → JAKA 机器人轴；与 demo 和官方示例一致。
+    headset_to_robot: [0.0, 0.0, -1.0, -1.0, 0.0, 0.0, 0.0, 1.0, 0.0]
+    smooth_alpha: 0.4          # 一阶低通系数：0 关闭滤波，1 完全跟随原始值
+    pose_scale: 1.0
+    grip_threshold: 0.5        # 生成数字 LG/RG/LTr/RTr 的阈值
+    robot_base_frame: world
+    tf_translation: [0.0, 0.0, 0.0]
+    tf_rotation: [1.0, 0.0, 0.0, 0.0]
+    # 头显跟踪系朝向与机器人不一致时，绕 base z 轴的补偿角（度）。
+    # 前后/左右相反、上下正常时填 180；也可运行中用 ros2 param set 修改。
+    headset_yaw_offset_deg: 0.0
+
+    # ── 控制器与按键 ──
+    enable_left: true
+    enable_right: true
+    # LJ（Joy.buttons[6]）系统软件急停；Y（buttons[1]）只清按钮锁存。
+    # 按键名统一加引号：YAML 1.1 会把裸 Y 解析成布尔 true。
+    estop_button: "LJ"
+    clear_estop_button: "Y"
+    # 右 B（buttons[3]）切换双臂协同模式：右手柄同时驱动双臂。
+    dual_arm_button: "B"
+    # RJ（右摇杆按下）长按 confirm_hold_s 秒：请求人工确认恢复许可。
+    # 只有 supervisor 判定当前 CLEAR/NEAR 才会接受；恢复后仍需重新 Grip/底盘使能。
+    confirm_button: "RJ"
+    confirm_hold_s: 1.5
+    # X（buttons[0]）/A（buttons[2]）的夹爪锁定由下游臂节点读 Joy 实现；
+    # 桥只登记并检查名字，不做额外解释，LJ/Y 不会改变这两个键。
+    gripper_left_button: "X"
+    gripper_right_button: "A"
+
+    # ── dry-run / 合成输入 ──
+    # true 时完全不 import/初始化 XRoboToolkit SDK，只发 Joy/心跳/急停。
+    # dry_run_input 指向 JSON 帧文件；留空表示中性输入（两侧未跟踪）。
+    # 帧格式（t 为自桥启动起的秒数；未写的键沿用上一帧）：
+    # {
+    #   "frames": [
+    #     {"t": 0.0, "left": {"pose": [0,0,0,0,0,0,1], "grip": 0.0}, "right": {...}},
+    #     {"t": 0.5, "left": {"axis_click": true}},
+    #     {"t": 0.8, "left": {"axis_click": false, "Y": true}}
+    #   ]
+    # }
+    dry_run: false
+    dry_run_input: ""
+    dry_run_loop: true
+
+    # ── 诊断 ──
+    # Quest MAC 只用于日志识别；设备发现和连接由 PC-service 负责。
+    quest_mac: "50:99:03:0a:38:78"
+    tracking_warn_period_s: 5.0

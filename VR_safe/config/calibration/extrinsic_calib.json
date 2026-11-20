@@ -1,0 +1,397 @@
+{
+ "schema": "jaka_extrinsic_calib.v1",
+ "time": "2026-11-16 19:10:11",
+ "ok": false,
+ "not_ok_reasons": [
+  "放开地面约束后倾斜 4.0°、离地 +3.5 cm，地面约束和点云不太一致"
+ ],
+ "method": "模型对点云配准 + 地面约束（3 自由度：θ、tx、ty），点到面 ICP + Huber（细档截断），裁剪半径 [0.3, 0.2, 0.12, 0.08, 0.05, 0.03, 0.02] m",
+ "static_only": false,
+ "convention": "T_cam_base: 基座系→相机光学系；T_cam_base = T_init @ [Rz(theta)|(tx,ty,0)]，theta/tx/ty 在初值基座系（地面为 z=0）里",
+ "T_cam_base": [
+  [
+   -0.003963,
+   -0.999824,
+   -0.01835,
+   0.103786
+  ],
+  [
+   -0.52158,
+   0.017723,
+   -0.853018,
+   1.493968
+  ],
+  [
+   0.853193,
+   0.00619,
+   -0.521559,
+   0.865805
+  ],
+  [
+   0.0,
+   0.0,
+   0.0,
+   1.0
+  ]
+ ],
+ "T_base_cam": [
+  [
+   -0.003963,
+   -0.52158,
+   0.853193,
+   0.040937
+  ],
+  [
+   -0.999824,
+   0.017723,
+   0.00619,
+   0.07193
+  ],
+  [
+   -0.01835,
+   -0.853018,
+   -0.521559,
+   1.727854
+  ],
+  [
+   0.0,
+   0.0,
+   0.0,
+   1.0
+  ]
+ ],
+ "correction": {
+  "theta_deg": 0.1032,
+  "tx_m": 0.42117,
+  "ty_m": -0.10233
+ },
+ "T_init": [
+  [
+   -0.002162,
+   -0.999829,
+   -0.01835,
+   0.002384
+  ],
+  [
+   -0.521612,
+   0.016784,
+   -0.853018,
+   1.715371
+  ],
+  [
+   0.85318,
+   0.007727,
+   -0.521559,
+   0.507265
+  ],
+  [
+   0.0,
+   0.0,
+   0.0,
+   1.0
+  ]
+ ],
+ "init_note": "设计值（sensors.json）取逆 + align_to_floor",
+ "plane": {
+  "origin": [
+   -0.24334,
+   0.59109,
+   2.35469
+  ],
+  "normal": [
+   -0.01835,
+   -0.85302,
+   -0.52156
+  ],
+  "file_mtime": "2026-11-16 18:34:45"
+ },
+ "camera_id": "top",
+ "q_rad": {
+  "left_joint_1": -1.6160059394751563,
+  "left_joint_2": 2.324608219521452,
+  "left_joint_3": 1.3714854858036758,
+  "left_joint_4": 2.3909644159518,
+  "left_joint_5": -0.04143795616669978,
+  "left_joint_6": -1.4027863951418673,
+  "right_joint_1": -1.5213160679679323,
+  "right_joint_2": 0.38677997207351056,
+  "right_joint_3": -1.1811013058047053,
+  "right_joint_4": 2.6756178431082644,
+  "right_joint_5": 0.18120008294205128,
+  "right_joint_6": -1.9697094787624212
+ },
+ "q_deg": {
+  "left_joint_1": -92.59,
+  "left_joint_2": 133.19,
+  "left_joint_3": 78.58,
+  "left_joint_4": 136.992,
+  "left_joint_5": -2.374,
+  "left_joint_6": -80.374,
+  "right_joint_1": -87.165,
+  "right_joint_2": 22.161,
+  "right_joint_3": -67.672,
+  "right_joint_4": 153.302,
+  "right_joint_5": 10.382,
+  "right_joint_6": -112.856
+ },
+ "model": {
+  "n_points": 35848,
+  "spacing_m": 0.006,
+  "exclude": [
+   "top_camera_link"
+  ],
+  "only": [
+   "_Link_01",
+   "_Link_02",
+   "_Link_03",
+   "_Link_04",
+   "_Link_05"
+  ]
+ },
+ "n_scene_points": 11640,
+ "metrics_before": {
+  "n_scene_band": 245,
+  "n_inlier": 0,
+  "inlier_ratio": 0.0,
+  "res_med_mm": null,
+  "res_p90_mm": null,
+  "n_model_visible": 1792,
+  "model_coverage": 0.0
+ },
+ "metrics_after": {
+  "n_scene_band": 8232,
+  "n_inlier": 5945,
+  "inlier_ratio": 0.7222,
+  "res_med_mm": 2.7,
+  "res_p90_mm": 10.01,
+  "n_model_visible": 7136,
+  "model_coverage": 0.4044
+ },
+ "per_link": {
+  "右臂 Link_03": {
+   "visible": 1924,
+   "claimed": 616,
+   "claimed_ratio": 0.32,
+   "inliers": 2263,
+   "inlier_share": 0.381
+  },
+  "右臂 Link_02": {
+   "visible": 629,
+   "claimed": 206,
+   "claimed_ratio": 0.328,
+   "inliers": 1322,
+   "inlier_share": 0.222
+  },
+  "左臂 Link_03": {
+   "visible": 1796,
+   "claimed": 75,
+   "claimed_ratio": 0.042,
+   "inliers": 835,
+   "inlier_share": 0.141
+  },
+  "右臂 Link_04": {
+   "visible": 706,
+   "claimed": 260,
+   "claimed_ratio": 0.368,
+   "inliers": 650,
+   "inlier_share": 0.109
+  },
+  "左臂 Link_04": {
+   "visible": 770,
+   "claimed": 49,
+   "claimed_ratio": 0.064,
+   "inliers": 464,
+   "inlier_share": 0.078
+  },
+  "左臂 Link_05": {
+   "visible": 831,
+   "claimed": 39,
+   "claimed_ratio": 0.047,
+   "inliers": 329,
+   "inlier_share": 0.055
+  },
+  "右臂 Link_05": {
+   "visible": 442,
+   "claimed": 29,
+   "claimed_ratio": 0.066,
+   "inliers": 80,
+   "inlier_share": 0.013
+  },
+  "左臂 Link_02": {
+   "visible": 38,
+   "claimed": 0,
+   "claimed_ratio": 0.0,
+   "inliers": 0,
+   "inlier_share": 0.0
+  }
+ },
+ "dark_filter_V": 50,
+ "icp_stages": [
+  {
+   "radius_m": 0.3,
+   "iters": 20,
+   "n_used": 9343,
+   "huber_mm": 75.0,
+   "med_abs_res_mm": 12.3
+  },
+  {
+   "radius_m": 0.2,
+   "iters": 12,
+   "n_used": 9253,
+   "huber_mm": 50.0,
+   "med_abs_res_mm": 10.7
+  },
+  {
+   "radius_m": 0.12,
+   "iters": 17,
+   "n_used": 8474,
+   "huber_mm": 30.0,
+   "med_abs_res_mm": 8.06
+  },
+  {
+   "radius_m": 0.08,
+   "iters": 19,
+   "n_used": 7722,
+   "huber_mm": 20.0,
+   "med_abs_res_mm": 6.5
+  },
+  {
+   "radius_m": 0.05,
+   "iters": 10,
+   "n_used": 7370,
+   "huber_mm": 12.5,
+   "med_abs_res_mm": 4.18
+  },
+  {
+   "radius_m": 0.03,
+   "iters": 18,
+   "n_used": 6599,
+   "huber_mm": 7.5,
+   "med_abs_res_mm": 3.12
+  },
+  {
+   "radius_m": 0.02,
+   "iters": 15,
+   "n_used": 5913,
+   "huber_mm": 6.0,
+   "med_abs_res_mm": 2.65
+  }
+ ],
+ "coarse_candidates": [
+  {
+   "coarse_score": 0,
+   "n_inlier": 5946,
+   "inlier_ratio": 0.7334,
+   "res_med_mm": 2.67,
+   "model_coverage": 0.4062,
+   "theta_deg": 0.098,
+   "tx_m": 0.4212,
+   "ty_m": -0.1024
+  }
+ ],
+ "convergence": {
+  "n": 4,
+  "n_same_solution": 4,
+  "rule": "与主解差 <0.5° 且 <1 cm 算收敛到同一解",
+  "theta_spread_deg": 0.0413,
+  "trans_spread_cm": 0.03,
+  "runs_deg_m": [
+   [
+    0.09158,
+    0.42121,
+    -0.10232
+   ],
+   [
+    0.06188,
+    0.42132,
+    -0.10207
+   ],
+   [
+    0.08066,
+    0.4212,
+    -0.10225
+   ],
+   [
+    0.08939,
+    0.4212,
+    -0.10233
+   ]
+  ]
+ },
+ "frame_groups": {
+  "groups_deg_m": [
+   [
+    0.11183,
+    0.42107,
+    -0.10245
+   ],
+   [
+    0.10703,
+    0.42114,
+    -0.10241
+   ],
+   [
+    0.08249,
+    0.42124,
+    -0.10223
+   ]
+  ],
+  "theta_range_deg": 0.0293,
+  "trans_range_cm": 0.022
+ },
+ "six_dof": {
+  "rot_diff_deg": 3.956,
+  "trans_diff_cm": 9.79,
+  "trans_diff_xyz_cm": [
+   -4.86,
+   7.75,
+   3.49
+  ],
+  "tilt_vs_floor_deg": 3.952,
+  "height_vs_floor_cm": 3.49,
+  "theta_deg": 0.338,
+  "metrics": {
+   "n_scene_band": 8327,
+   "n_inlier": 6425,
+   "inlier_ratio": 0.7716,
+   "res_med_mm": 2.06,
+   "res_p90_mm": 10.27,
+   "n_model_visible": 7057,
+   "model_coverage": 0.4417
+  },
+  "T_cam_base": [
+   [
+    -0.007323,
+    -0.999258,
+    0.037826,
+    0.025806
+   ],
+   [
+    -0.487318,
+    -0.029465,
+    -0.872727,
+    1.490941
+   ],
+   [
+    0.873194,
+    -0.024824,
+    -0.486741,
+    0.806642
+   ],
+   [
+    0.0,
+    0.0,
+    0.0,
+    1.0
+   ]
+  ]
+ },
+ "figures": [
+  "out/calib/20261116_arms_cap/v3_cyl/before.jpg",
+  "out/calib/20261116_arms_cap/v3_cyl/after.jpg",
+  "out/calib/20261116_arms_cap/v3_cyl/compare_overlay.jpg",
+  "out/calib/20261116_arms_cap/v3_cyl/compare_side_by_side.jpg",
+  "out/calib/20261116_arms_cap/v3_cyl/residual_after.jpg"
+ ],
+ "capture_dir": "out/calib/20261116_arms_cap"
+}

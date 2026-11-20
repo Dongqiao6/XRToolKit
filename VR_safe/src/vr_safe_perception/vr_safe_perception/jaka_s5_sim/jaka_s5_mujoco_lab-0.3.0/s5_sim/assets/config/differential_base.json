@@ -1,0 +1,47 @@
+{
+  "schema": "jaka_s5.differential_base.v1",
+  "drive_type": "two_wheel_differential",
+  "drive_type_source": "User explicitly confirmed differential drive",
+  "wheel_radius_m": 0.1,
+  "track_width_m": 0.5,
+  "wheel_width_m": 0.055,
+  "drive_axle_x_m": 0.0,
+  "ground_z_m": 0.0,
+  "wheel_joint_axis": [
+    0,
+    1,
+    0
+  ],
+  "forward_sign": {
+    "left": 1,
+    "right": 1
+  },
+  "parameter_status": "unmeasured_visual_and_kinematic_proxy",
+  "support_casters": {
+    "enabled": false,
+    "status": "count_and_locations_unknown_not_rendered_by_default",
+    "radius_m": 0.04,
+    "width_m": 0.035,
+    "candidate_locations_xy_m": [
+      [
+        0.36,
+        0.22
+      ],
+      [
+        0.36,
+        -0.22
+      ],
+      [
+        -0.36,
+        0.22
+      ],
+      [
+        -0.36,
+        -0.22
+      ]
+    ]
+  },
+  "simulation_scope": "Exact no-slip planar odometry and wheel-angle visualization only; not wheel-ground contact dynamics or measured mobile-base behavior.",
+  "physical_calibration_verified": false,
+  "hardware_write_enabled": false
+}
